@@ -53,6 +53,7 @@ message JoinResponse {
   string session_id = 2;        // 服务端分配的会话 ID
   uint32 server_protocol_version = 3;
   string error_message = 4;     // 如果 accepted=false
+  uint64 server_time_ms = 5;    // 服务端毫秒时间戳 (用于时钟同步)
 }
 
 // 错误响应

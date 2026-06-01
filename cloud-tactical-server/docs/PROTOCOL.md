@@ -360,7 +360,64 @@ Client                                   Server
 
 ---
 
-## 9. Error Recovery
+## 9. Clock Synchronization
+
+Multi-client track fusion requires a common time reference. Each relay client **must** align its observation timestamps to the server clock.
+
+### Procedure (NTP-style)
+
+1. Client records local time `T1`, sends `Ping{client_time_ms: T1}`
+2. Server responds with `Pong{client_time_ms: T1, server_time_ms: T2}`
+3. Client records receive time `T3`
+4. Client computes:
+   - `RTT = T3 - T1`
+   - `offset = T2 - (T1 + RTT / 2)`
+   - `estimated_server_time = local_time + offset`
+5. Client sets `ObservationFrame.observed_at_ms = estimated_server_time`
+6. Repeat every 5–10 seconds, use **median filter** over last 5 samples to reject outliers
+
+### Join-time Sync
+
+The `JoinResponse` includes `server_time_ms` for immediate initial offset estimation:
+
+```protobuf
+message JoinResponse {
+  // ...
+  uint64 server_time_ms = 5;  // server wall clock at join time
+}
+```
+
+### Server Validation
+
+Server validates each observation's timestamp:
+- `observed_at_ms` must not be > 30 s in the future (clock skew guard)
+- `observed_at_ms` must not be > 60 s in the past (stale data guard)
+- Out-of-range timestamps are clamped to current server time
+
+### Fusion Timing
+
+The fusion engine uses `observed_at_ms` (server-synced) for:
+- Track staleness — how long since last observation
+- ROI prediction — velocity × elapsed time
+- Track cleanup — expiry after ROI TTL
+
+**Server receive time is not used for fusion timing** — only for protocol-level timeout detection.
+
+### Precision Target
+
+For 2 Hz fusion with international players:
+
+| Scenario | Typical RTT | Expected Sync Accuracy |
+|---|---|---|
+| LAN | < 5 ms | ±5 ms |
+| Same continent | 20–60 ms | ±15 ms |
+| Trans-Pacific | 100–200 ms | ±50 ms (with median filter) |
+
+±50 ms accuracy is sufficient for 500 ms fusion ticks.
+
+---
+
+## 10. Error Recovery
 
 1. **Decode error:** Server sends `ErrorResponse(code=400)`, client should re-send with valid protobuf.
 2. **Protocol mismatch:** Server rejects `JoinRequest` if `protocol_version != 1`.
@@ -369,7 +426,7 @@ Client                                   Server
 
 ---
 
-## 10. Security Notes
+## 11. Security Notes
 
 - **v1:** Passwords are hashed with a simple salted hash. Not suitable for production.
 - **v5+:** Will migrate to bcrypt/argon2 for password storage, add JWT auth, TLS, and rate limiting.

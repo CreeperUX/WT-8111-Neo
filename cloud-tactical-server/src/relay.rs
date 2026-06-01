@@ -18,6 +18,7 @@ pub async fn handle_relay(
     tracing::info!("Relay {client_id} connected to room {} (session {session_id})", room.info.room_id);
 
     // 等待 JoinRequest
+    let server_now = unix_ms();
     let joined = match wait_for_join(&mut ws).await {
         Ok(true) => {
             send_envelope(&mut ws, WsEnvelope {
@@ -26,6 +27,7 @@ pub async fn handle_relay(
                     session_id: session_id.clone(),
                     server_protocol_version: 1,
                     error_message: String::new(),
+                    server_time_ms: server_now,
                 })),
             }).await;
             true
@@ -37,6 +39,7 @@ pub async fn handle_relay(
                     session_id: String::new(),
                     server_protocol_version: 1,
                     error_message: "Invalid protocol version".into(),
+                    server_time_ms: server_now,
                 })),
             }).await;
             let _ = ws.close().await;

@@ -27,6 +27,7 @@ pub struct Track {
     pub source_count: u32,
     pub flags: u32,
     pub last_observed_at: Instant,
+    pub last_observed_at_ms: u64,   // 服务端等效时钟 (用于多端融合)
     pub history: VecDeque<TrackPoint>,
     pub created_at: Instant,
 
@@ -113,7 +114,9 @@ impl FusionEngine {
     }
 
     /// 执行一次融合 tick
-    pub fn tick(&mut self, now: Instant) -> FusionResult {
+    /// `now` — monotonic Instant (用于历史裁剪)
+    /// `now_ms` — 服务端 UNIX 毫秒 (用于多端融合时钟对齐)
+    pub fn tick(&mut self, now: Instant, now_ms: u64) -> FusionResult {
         let observations = std::mem::take(&mut self.pending_observations);
 
         for obs in &observations {
@@ -127,20 +130,20 @@ impl FusionEngine {
                 };
 
                 if let Some(track_id) = self.match_track(&fingerprint) {
-                    self.update_track(&track_id, obj, now);
+                    self.update_track(&track_id, obj, now, obs.observed_at_ms);
                 } else {
-                    let _ = self.create_track(obj, now);
+                    let _ = self.create_track(obj, now, obs.observed_at_ms);
                 }
             }
         }
 
-        // 生成 ROI
-        let (rois, stale_count) = self.predict_rois(now);
+        // 生成 ROI（基于 last_observed_at_ms）
+        let (rois, stale_count) = self.predict_rois(now_ms);
 
-        // 清理过期
-        let roi_duration = Duration::from_secs_f64(self.config.roi_ttl_secs);
+        // 清理过期（基于 last_observed_at_ms）
+        let roi_ttl_ms = (self.config.roi_ttl_secs * 1000.0) as u64;
         self.tracks
-            .retain(|_, t| now.duration_since(t.last_observed_at) < roi_duration);
+            .retain(|_, t| now_ms.saturating_sub(t.last_observed_at_ms) < roi_ttl_ms);
 
         // 构建结果
         let all_tracks: Vec<Track> = self.tracks.values().cloned().collect();
@@ -192,7 +195,7 @@ impl FusionEngine {
         best_id
     }
 
-    fn create_track(&mut self, obj: &ParsedObject, now: Instant) -> String {
+    fn create_track(&mut self, obj: &ParsedObject, now: Instant, observed_at_ms: u64) -> String {
         let id = format!("trk_{:08x}", self.track_counter);
         self.track_counter += 1;
 
@@ -219,6 +222,7 @@ impl FusionEngine {
                 source_count: 1,
                 flags: obj.flags,
                 last_observed_at: now,
+                last_observed_at_ms: observed_at_ms,
                 history,
                 created_at: now,
                 anchor_x_u16: obj.x_u16,
@@ -231,14 +235,12 @@ impl FusionEngine {
         id
     }
 
-    fn update_track(&mut self, track_id: &str, obj: &ParsedObject, now: Instant) {
+    fn update_track(&mut self, track_id: &str, obj: &ParsedObject, now: Instant, observed_at_ms: u64) {
         let Some(track) = self.tracks.get_mut(track_id) else {
             return;
         };
 
         // 速度估算
-        let prev_vx = track.vx_i16;
-        let prev_vy = track.vy_i16;
         if let Some(last) = track.history.back() {
             let dt = now.duration_since(last.at).as_secs_f64().max(0.1);
             track.vx_i16 = ((obj.x_u16 as f64 - last.x_u16 as f64) / dt) as i32;
@@ -250,6 +252,7 @@ impl FusionEngine {
         track.heading_i16 = obj.heading_i16;
         track.flags = obj.flags;
         track.last_observed_at = now;
+        track.last_observed_at_ms = observed_at_ms;
         track.confidence_u8 = 255;
 
         // 冻结锚点：记录最新观测时的位置和速度
@@ -272,10 +275,11 @@ impl FusionEngine {
     }
 
     /// 生成椭圆 ROI：主轴沿运动方向，前向拉长
-    fn predict_rois(&self, now: Instant) -> (Vec<PredictedRoi>, u32) {
+    /// 使用 last_observed_at_ms (服务端对齐时钟) 计算消失时长
+    fn predict_rois(&self, now_ms: u64) -> (Vec<PredictedRoi>, u32) {
         let mut rois = Vec::new();
         let mut stale_count = 0u32;
-        let roi_ttl_ms = (self.config.roi_ttl_secs * 1000.0) as u32;
+        let roi_ttl_ms = (self.config.roi_ttl_secs * 1000.0) as u64;
         let roi_ttl = self.config.roi_ttl_secs;
 
         for track in self.tracks.values() {
@@ -285,7 +289,7 @@ impl FusionEngine {
                 continue;
             }
 
-            let ms_since = now.duration_since(track.last_observed_at).as_millis() as u32;
+            let ms_since = now_ms.saturating_sub(track.last_observed_at_ms);
 
             // 只在目标消失期间生成 ROI
             if ms_since == 0 || ms_since >= roi_ttl_ms {

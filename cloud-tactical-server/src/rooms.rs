@@ -171,7 +171,8 @@ async fn run_fusion_loop(
         tokio::select! {
             _ = tick_interval.tick() => {
                 let now = std::time::Instant::now();
-                let result = fusion.tick(now);
+                let now_ms = unix_ms();
+                let result = fusion.tick(now, now_ms);
 
                 if result.total_count > 0 || !result.rois.is_empty() {
                     tracing::debug!(
@@ -207,4 +208,11 @@ fn hash_password(password: &str) -> String {
 
 fn verify_password(password: &str, hash: &str) -> bool {
     hash_password(password) == hash
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
