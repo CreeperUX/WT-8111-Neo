@@ -29,12 +29,6 @@ pub struct Track {
     pub last_observed_at: Instant,
     pub history: VecDeque<TrackPoint>,
     pub created_at: Instant,
-
-    // ROI 锚点：目标消失瞬间的位置和速度
-    pub anchor_x_u16: u32,
-    pub anchor_y_u16: u32,
-    pub anchor_vx_i16: i32,
-    pub anchor_vy_i16: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -63,22 +57,18 @@ pub struct ParsedObject {
     pub flags: u32,
 }
 
-/// 椭圆 ROI 预测
+/// ROI 预测区域
 #[derive(Debug, Clone)]
 pub struct PredictedRoi {
     pub track_id: String,
-    pub center_x_u16: u32,
-    pub center_y_u16: u32,
-    pub anchor_x_u16: u32,
-    pub anchor_y_u16: u32,
-    pub radius_major_u16: u32,
-    pub radius_minor_u16: u32,
-    pub heading_i16: i32,
+    pub x_u16: u32,
+    pub y_u16: u32,
+    pub radius_u16: u32,
     pub expires_in_ms: u32,
     pub confidence_u8: u32,
 }
 
-/// 一次 tick 的融合结果
+/// 一次 tick 的融合结果（全 owned）
 #[derive(Debug, Clone)]
 pub struct FusionResult {
     pub tracks: Vec<Track>,
@@ -129,18 +119,15 @@ impl FusionEngine {
                 if let Some(track_id) = self.match_track(&fingerprint) {
                     self.update_track(&track_id, obj, now);
                 } else {
-                    let _ = self.create_track(obj, now);
+                    let track_id = self.create_track(obj, now);
+                    // track 已加入 self.tracks，无需额外操作
+                    let _ = track_id;
                 }
             }
         }
 
-        // 生成 ROI
-        let (rois, stale_count) = self.predict_rois(now);
-
-        // 清理过期
-        let roi_duration = Duration::from_secs_f64(self.config.roi_ttl_secs);
-        self.tracks
-            .retain(|_, t| now.duration_since(t.last_observed_at) < roi_duration);
+        // 清理过期 + 生成 ROI
+        let (rois, stale_count) = self.prune_and_predict(now);
 
         // 构建结果
         let all_tracks: Vec<Track> = self.tracks.values().cloned().collect();
@@ -221,10 +208,6 @@ impl FusionEngine {
                 last_observed_at: now,
                 history,
                 created_at: now,
-                anchor_x_u16: obj.x_u16,
-                anchor_y_u16: obj.y_u16,
-                anchor_vx_i16: 0,
-                anchor_vy_i16: 0,
             },
         );
 
@@ -237,8 +220,6 @@ impl FusionEngine {
         };
 
         // 速度估算
-        let prev_vx = track.vx_i16;
-        let prev_vy = track.vy_i16;
         if let Some(last) = track.history.back() {
             let dt = now.duration_since(last.at).as_secs_f64().max(0.1);
             track.vx_i16 = ((obj.x_u16 as f64 - last.x_u16 as f64) / dt) as i32;
@@ -251,12 +232,6 @@ impl FusionEngine {
         track.flags = obj.flags;
         track.last_observed_at = now;
         track.confidence_u8 = 255;
-
-        // 冻结锚点：记录最新观测时的位置和速度
-        track.anchor_x_u16 = obj.x_u16;
-        track.anchor_y_u16 = obj.y_u16;
-        track.anchor_vx_i16 = track.vx_i16;
-        track.anchor_vy_i16 = track.vy_i16;
 
         track.history.push_back(TrackPoint {
             x_u16: obj.x_u16,
@@ -271,76 +246,44 @@ impl FusionEngine {
         }
     }
 
-    /// 生成椭圆 ROI：主轴沿运动方向，前向拉长
-    fn predict_rois(&self, now: Instant) -> (Vec<PredictedRoi>, u32) {
+    fn prune_and_predict(&mut self, now: Instant) -> (Vec<PredictedRoi>, u32) {
         let mut rois = Vec::new();
         let mut stale_count = 0u32;
-        let roi_ttl_ms = (self.config.roi_ttl_secs * 1000.0) as u32;
-        let roi_ttl = self.config.roi_ttl_secs;
+        let mut expired: Vec<String> = Vec::new();
 
-        for track in self.tracks.values() {
+        for (track_id, track) in &self.tracks {
             let ms_since = now.duration_since(track.last_observed_at).as_millis() as u32;
+            let roi_ttl_ms = (self.config.roi_ttl_secs * 1000.0) as u32;
 
-            // 只在目标消失期间生成 ROI
-            if ms_since == 0 || ms_since >= roi_ttl_ms {
-                continue;
+            if ms_since >= roi_ttl_ms {
+                expired.push(track_id.clone());
+            } else if ms_since > 0 {
+                let elapsed = ms_since as f64 / 1000.0;
+                let pred_x =
+                    (track.x_u16 as f64 + track.vx_i16 as f64 * elapsed).clamp(0.0, 65535.0) as u32;
+                let pred_y =
+                    (track.y_u16 as f64 + track.vy_i16 as f64 * elapsed).clamp(0.0, 65535.0) as u32;
+
+                let radius_growth = (elapsed * 500.0) as u32;
+                let radius = (200 + radius_growth).min(3000);
+                let confidence = ((255.0 * (1.0 - elapsed / self.config.roi_ttl_secs)) as u32).max(20);
+                let expires_in = ((self.config.roi_ttl_secs - elapsed) * 1000.0) as u32;
+
+                rois.push(PredictedRoi {
+                    track_id: track_id.clone(),
+                    x_u16: pred_x,
+                    y_u16: pred_y,
+                    radius_u16: radius,
+                    expires_in_ms: expires_in,
+                    confidence_u8: confidence,
+                });
+
+                stale_count += 1;
             }
+        }
 
-            let elapsed = ms_since as f64 / 1000.0;
-
-            // ── 椭圆中心 = 锚点 + 速度 × 时间 ──
-            let center_x = (track.anchor_x_u16 as f64
-                + track.anchor_vx_i16 as f64 * elapsed)
-                .clamp(0.0, 65535.0) as u32;
-            let center_y = (track.anchor_y_u16 as f64
-                + track.anchor_vy_i16 as f64 * elapsed)
-                .clamp(0.0, 65535.0) as u32;
-
-            // ── 主轴方向 ──
-            let speed = ((track.anchor_vx_i16 as f64).powi(2)
-                + (track.anchor_vy_i16 as f64).powi(2))
-                .sqrt();
-            let heading = if speed > 1.0 {
-                // atan2(dx, -dy) → 0=北, 顺时针
-                (track.anchor_vx_i16 as f64)
-                    .atan2(-track.anchor_vy_i16 as f64)
-                    .to_degrees() as i32
-            } else {
-                // 静止目标 → 各向同性，heading 无效
-                0
-            };
-
-            // ── 半长轴 (沿运动方向，增长快) ──
-            // base + speed_factor * elapsed + growth_rate * elapsed
-            let base_radius = 200u32;
-            let speed_bonus = (speed * elapsed * 800.0) as u32; // 速度越快，前向越长
-            let time_growth = (elapsed * 300.0) as u32; // 基础时间增长
-            let radius_major = (base_radius + speed_bonus + time_growth).min(5000);
-
-            // ── 半短轴 (垂直于运动方向，增长慢) ──
-            let radius_minor = (base_radius + (elapsed.sqrt() * 150.0) as u32).min(2000);
-
-            // ── 置信度随时间衰减 ──
-            let confidence =
-                ((255.0 * (1.0 - elapsed / roi_ttl)) as u32).max(20);
-
-            // ── 剩余时间 ──
-            let expires_in = ((roi_ttl - elapsed) * 1000.0) as u32;
-
-            rois.push(PredictedRoi {
-                track_id: track.track_id.clone(),
-                center_x_u16: center_x,
-                center_y_u16: center_y,
-                anchor_x_u16: track.anchor_x_u16,
-                anchor_y_u16: track.anchor_y_u16,
-                radius_major_u16: radius_major,
-                radius_minor_u16: radius_minor,
-                heading_i16: heading,
-                expires_in_ms: expires_in,
-                confidence_u8: confidence,
-            });
-
-            stale_count += 1;
+        for id in expired {
+            self.tracks.remove(&id);
         }
 
         (rois, stale_count)

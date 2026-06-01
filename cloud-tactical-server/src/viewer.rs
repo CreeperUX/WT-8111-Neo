@@ -86,13 +86,9 @@ fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
         .iter()
         .map(|r| InterestRegion {
             track_id: r.track_id.clone(),
-            center_x_u16: r.center_x_u16,
-            center_y_u16: r.center_y_u16,
-            anchor_x_u16: r.anchor_x_u16,
-            anchor_y_u16: r.anchor_y_u16,
-            radius_major_u16: r.radius_major_u16,
-            radius_minor_u16: r.radius_minor_u16,
-            heading_i16: r.heading_i16,
+            x_u16: r.x_u16,
+            y_u16: r.y_u16,
+            radius_u16: r.radius_u16,
             expires_in_ms: r.expires_in_ms,
             confidence_u8: r.confidence_u8,
         })
