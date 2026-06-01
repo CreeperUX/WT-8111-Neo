@@ -63,34 +63,6 @@ interface FirePoint {
   objectKey?: string;
 }
 
-interface TrackSample {
-  x: number;
-  y: number;
-  at: number;
-}
-
-interface TargetObservation {
-  fingerprint: string;
-  label: string;
-  x: number;
-  y: number;
-  objectKey: string;
-  color: string;
-}
-
-interface HostileTrack {
-  id: string;
-  fingerprint: string;
-  label: string;
-  color: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
-  objectKey?: string;
-  samples: TrackSample[];
-  velocityX: number;
-  velocityY: number;
-}
-
 interface MapView {
   zoom: number;
   panX: number;
@@ -175,8 +147,6 @@ const affiliationTheme: Record<
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
-const HOSTILE_TRACK_HISTORY_MS = 3000;
-const HOSTILE_ROI_RETENTION_MS = 15000;
 const EMPTY_MAP_OBJECTS: WTMapObject[] = [];
 const GRID_LINES = Array.from({ length: 9 }, (_, index) => index / 8);
 
@@ -284,15 +254,6 @@ function objectKey(object: WTMapObject, index: number) {
 
 function objectVisibilityKey(object: WTMapObject, index: number) {
   return objectKey(object, index);
-}
-
-function targetFingerprint(object: WTMapObject) {
-  return [
-    inferAffiliation(object),
-    objectLabel(object).toLowerCase(),
-    objectColorSignature(object),
-    classifyObject(object)
-  ].join("|");
 }
 
 function markerRef(marker: MapMarker): FirePointRef {
@@ -539,146 +500,6 @@ function sortObjectsByTacticalPriority(
 
       return left.index - right.index;
     });
-}
-
-function collectHostileObservations(objects: WTMapObject[]): TargetObservation[] {
-  return objects
-    .map((object, index) => ({ object, index }))
-    .filter(({ object }) => inferAffiliation(object) === "hostile" && hasMapPoint(object))
-    .map(({ object, index }) => ({
-      fingerprint: targetFingerprint(object),
-      label: objectLabel(object),
-      x: object.x ?? 0,
-      y: object.y ?? 0,
-      objectKey: objectVisibilityKey(object, index),
-      color: objectColor(object)
-    }));
-}
-
-function predictTrackPoint(track: HostileTrack, at: number): TrackSample {
-  const last = track.samples[track.samples.length - 1];
-  if (!last) {
-    return { x: 0, y: 0, at };
-  }
-
-  const elapsedSeconds = Math.max(0, (at - track.lastSeenAt) / 1000);
-  return {
-    x: clamp(last.x + track.velocityX * elapsedSeconds, 0, 1),
-    y: clamp(last.y + track.velocityY * elapsedSeconds, 0, 1),
-    at
-  };
-}
-
-function deriveVelocity(samples: TrackSample[], fallback: Pick<HostileTrack, "velocityX" | "velocityY">) {
-  const last = samples[samples.length - 1];
-  const first = samples.find((sample) => last && last.at - sample.at >= 250) ?? samples[0];
-  if (!first || !last || first.at === last.at) {
-    return fallback;
-  }
-
-  const elapsedSeconds = (last.at - first.at) / 1000;
-  return {
-    velocityX: (last.x - first.x) / elapsedSeconds,
-    velocityY: (last.y - first.y) / elapsedSeconds
-  };
-}
-
-function appendTrackSample(track: HostileTrack, observation: TargetObservation, observedAt: number): HostileTrack {
-  const sample = { x: observation.x, y: observation.y, at: observedAt };
-  const previousSamples =
-    track.samples[track.samples.length - 1]?.at === observedAt
-      ? track.samples.slice(0, -1)
-      : track.samples;
-  const samples = [...previousSamples, sample].filter(
-    (item) => observedAt - item.at <= HOSTILE_TRACK_HISTORY_MS
-  );
-  const velocity = deriveVelocity(samples, track);
-
-  return {
-    ...track,
-    fingerprint: observation.fingerprint,
-    label: observation.label,
-    color: observation.color,
-    lastSeenAt: observedAt,
-    objectKey: observation.objectKey,
-    samples,
-    velocityX: velocity.velocityX,
-    velocityY: velocity.velocityY
-  };
-}
-
-function createHostileTrack(observation: TargetObservation, observedAt: number, ordinal: number): HostileTrack {
-  return {
-    id: `${observation.fingerprint}:${observedAt}:${ordinal}`,
-    fingerprint: observation.fingerprint,
-    label: observation.label,
-    color: observation.color,
-    firstSeenAt: observedAt,
-    lastSeenAt: observedAt,
-    objectKey: observation.objectKey,
-    samples: [{ x: observation.x, y: observation.y, at: observedAt }],
-    velocityX: 0,
-    velocityY: 0
-  };
-}
-
-function matchHostileTrack(
-  observation: TargetObservation,
-  tracks: HostileTrack[],
-  usedTrackIds: Set<string>,
-  observedAt: number
-) {
-  const candidates = tracks
-    .filter((track) => track.fingerprint === observation.fingerprint && !usedTrackIds.has(track.id))
-    .map((track) => {
-      const predicted = predictTrackPoint(track, observedAt);
-      const distance = Math.hypot(observation.x - predicted.x, observation.y - predicted.y);
-      const elapsedSeconds = Math.max(0, (observedAt - track.lastSeenAt) / 1000);
-      const speed = Math.hypot(track.velocityX, track.velocityY);
-      const gate = 0.025 + Math.min(0.06, speed * elapsedSeconds * 1.8);
-
-      return { track, distance, gate };
-    })
-    .filter(({ distance, gate }) => distance <= gate)
-    .sort((left, right) => left.distance - right.distance);
-
-  return candidates[0]?.track;
-}
-
-function updateHostileTracks(
-  previousTracks: HostileTrack[],
-  objects: WTMapObject[],
-  observedAt: number
-): HostileTrack[] {
-  const observations = collectHostileObservations(objects);
-  const usedTrackIds = new Set<string>();
-  const nextTracks = new Map<string, HostileTrack>();
-
-  observations.forEach((observation, index) => {
-    const match = matchHostileTrack(observation, previousTracks, usedTrackIds, observedAt);
-    if (match) {
-      usedTrackIds.add(match.id);
-      nextTracks.set(match.id, appendTrackSample(match, observation, observedAt));
-      return;
-    }
-
-    const created = createHostileTrack(observation, observedAt, index);
-    usedTrackIds.add(created.id);
-    nextTracks.set(created.id, created);
-  });
-
-  previousTracks.forEach((track) => {
-    if (usedTrackIds.has(track.id) || observedAt - track.lastSeenAt > HOSTILE_ROI_RETENTION_MS) {
-      return;
-    }
-
-    nextTracks.set(track.id, {
-      ...track,
-      samples: track.samples.filter((sample) => observedAt - sample.at <= HOSTILE_TRACK_HISTORY_MS)
-    });
-  });
-
-  return Array.from(nextTracks.values());
 }
 
 function objectMatchesRefSignature(
@@ -1085,104 +906,9 @@ const NatoMapSymbol = memo(function NatoMapSymbol({
   );
 });
 
-const HostileTrackOverlay = memo(function HostileTrackOverlay({
-  track,
-  view,
-  now
-}: {
-  track: HostileTrack;
-  view: MapView;
-  now: number;
-}) {
-  const visibleSamples = track.samples
-    .filter((sample) => now - sample.at <= HOSTILE_TRACK_HISTORY_MS)
-    .flatMap((sample) => {
-      const screen = mapToScreenPoint(sample, view);
-      return screen ? [{ ...sample, screen }] : [];
-    });
-  const lastSample = track.samples[track.samples.length - 1];
-  const isObserved = now - track.lastSeenAt <= 650;
-
-  if (!lastSample) {
-    return null;
-  }
-
-  if (isObserved) {
-    const points = visibleSamples.map((sample) => `${sample.screen.x},${sample.screen.y}`).join(" ");
-    return (
-      <g className="hostile-track-layer" aria-label={`${track.label} hostile track`}>
-        {visibleSamples.length > 1 && (
-          <polyline className="hostile-track-line" points={points} vectorEffect="non-scaling-stroke" />
-        )}
-        {visibleSamples.map((sample, index) => (
-          <circle
-            key={`${track.id}-sample-${sample.at}-${index}`}
-            cx={sample.screen.x}
-            cy={sample.screen.y}
-            r={index === visibleSamples.length - 1 ? "0.0042" : "0.0028"}
-            className="hostile-track-dot"
-            opacity={clamp(1 - (now - sample.at) / HOSTILE_TRACK_HISTORY_MS, 0.25, 1)}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </g>
-    );
-  }
-
-  const predicted = predictTrackPoint(track, now);
-  const predictedScreen = mapToScreenPoint(predicted, view);
-  const lastScreen = mapToScreenPoint(lastSample, view);
-  if (!predictedScreen) {
-    return null;
-  }
-
-  const lostMs = now - track.lastSeenAt;
-  const retentionRatio = clamp(lostMs / HOSTILE_ROI_RETENTION_MS, 0, 1);
-  const uncertaintyRadius = 0.018 + retentionRatio * 0.045;
-  const opacity = clamp(1 - retentionRatio, 0.18, 0.78);
-
-  return (
-    <g className="hostile-roi-layer" opacity={opacity} aria-label={`${track.label} predicted interest area`}>
-      {lastScreen && (
-        <line
-          x1={lastScreen.x}
-          y1={lastScreen.y}
-          x2={predictedScreen.x}
-          y2={predictedScreen.y}
-          className="hostile-prediction-line"
-          vectorEffect="non-scaling-stroke"
-        />
-      )}
-      <circle
-        cx={predictedScreen.x}
-        cy={predictedScreen.y}
-        r={uncertaintyRadius}
-        className="hostile-roi-ring"
-        vectorEffect="non-scaling-stroke"
-      />
-      <circle
-        cx={predictedScreen.x}
-        cy={predictedScreen.y}
-        r="0.004"
-        className="hostile-roi-center"
-        vectorEffect="non-scaling-stroke"
-      />
-      <text
-        x={predictedScreen.x}
-        y={predictedScreen.y + uncertaintyRadius + 0.018}
-        className="hostile-roi-label"
-      >
-        ROI {Math.max(0, Math.ceil((HOSTILE_ROI_RETENTION_MS - lostMs) / 1000))}s
-      </text>
-    </g>
-  );
-});
-
 function MapSurface({
   mapInfo,
   objects,
-  hostileTracks,
-  trackNow,
   markers,
   activeMarker,
   sourcePoint,
@@ -1194,8 +920,6 @@ function MapSurface({
 }: {
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
-  hostileTracks: HostileTrack[];
-  trackNow: number;
   markers: MapMarker[];
   activeMarker?: MapMarker;
   sourcePoint?: FirePoint;
@@ -1408,10 +1132,6 @@ function MapSurface({
           </svg>
         </div>
         <svg className="symbol-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-          {hostileTracks.map((track) => (
-            <HostileTrackOverlay key={track.id} track={track} view={view} now={trackNow} />
-          ))}
-
           {visibleObjects.map(({ object, index, key }) => (
             <NatoMapSymbol
               key={key}
@@ -1881,8 +1601,6 @@ export default function App() {
   const [hiddenObjectKeys, setHiddenObjectKeys] = useState<Set<string>>(() => new Set());
   const [sourceRef, setSourceRef] = useState<FirePointRef>({ kind: "player" });
   const [targetRef, setTargetRef] = useState<FirePointRef | undefined>();
-  const [hostileTracks, setHostileTracks] = useState<HostileTrack[]>([]);
-  const [trackNow, setTrackNow] = useState(() => Date.now());
   const activeMarker = markers[markers.length - 1];
   const objects = mapData.ok ? mapData.mapObjects ?? EMPTY_MAP_OBJECTS : EMPTY_MAP_OBJECTS;
 
@@ -1916,15 +1634,6 @@ export default function App() {
       }
     }
   }, [targetRef, targetPoint]);
-
-  useEffect(() => {
-    if (!mapData.updatedAt) {
-      return;
-    }
-
-    setTrackNow(mapData.updatedAt);
-    setHostileTracks((previous) => updateHostileTracks(previous, objects, mapData.updatedAt));
-  }, [objects, mapData.updatedAt]);
 
   function clearMarkers() {
     setMarkers([]);
@@ -2004,8 +1713,6 @@ export default function App() {
         <MapSurface
           mapInfo={mapData.mapInfo}
           objects={objects}
-          hostileTracks={hostileTracks}
-          trackNow={trackNow}
           markers={markers}
           activeMarker={activeMarker}
           sourcePoint={sourcePoint}
