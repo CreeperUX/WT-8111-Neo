@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "WT8111Neo.Control (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "WT8111Neo.Control (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

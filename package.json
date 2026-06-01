@@ -1,0 +1,26 @@
+{
+  "name": "wt-8111-neo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
+    "service:dev": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "service:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-service.ps1",
+    "control:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-control.ps1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.11"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.6.3"
+  }
+}

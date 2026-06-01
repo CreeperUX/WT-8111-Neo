@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+wt-map-check.*
+src-tauri/target/
+src-tauri/gen/
+artifacts/
