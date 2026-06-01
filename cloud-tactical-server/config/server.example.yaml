@@ -1,0 +1,20 @@
+# Cloud Tactical Server Configuration
+# 环境变量会覆盖对应字段：CONFIG_PATH 指定配置文件路径
+
+host: "0.0.0.0"
+port: 17712
+
+# 融合引擎参数
+fusion_interval_ms: 500       # 融合 tick 间隔 (2 Hz)
+track_history_secs: 3.0       # 目标航迹保留时长
+roi_ttl_secs: 15.0            # 目标消失后 ROI 保留时长
+
+# 服务器限制
+max_rooms: 100                # 最大房间数
+max_clients_per_room: 32      # 每个房间最大客户端数
+room_password_required: false # 是否强制要求密码
+
+# 安全 (阶段 5 启用)
+# jwt_secret: ""
+# tls_cert: ""
+# tls_key: ""

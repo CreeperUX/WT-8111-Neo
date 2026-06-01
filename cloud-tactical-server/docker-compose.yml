@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  cloud-tactical-server:
+    build: .
+    container_name: wt8111-tactical
+    restart: unless-stopped
+    ports:
+      - "17712:17712"
+    environment:
+      - RUST_LOG=cloud_tactical_server=info,tower_http=info
+    volumes:
+      - ./config/server.yaml:/app/config/server.yaml:ro
+    # 健康检查
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:17712/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── 后续阶段启用 ──
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: wt8111-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: wt8111-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: wt8111
+  #     POSTGRES_USER: wt8111
+  #     POSTGRES_PASSWORD: change-me
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - pg-data:/var/lib/postgresql/data
+  #     - ./migrations:/docker-entrypoint-initdb.d
+
+# volumes:
+#   redis-data:
+#   pg-data:
