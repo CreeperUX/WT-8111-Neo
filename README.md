@@ -38,6 +38,34 @@ Daily usage:
 2. Use the Dashboard button to open the Web GUI in a browser.
 3. On another LAN device, open `http://<gaming-pc-ip>:17711`.
 
+## Web Tactical Map Workbench
+
+The current Web GUI map workbench includes quick fire mission and artillery map
+plotting helpers:
+
+- The map object list shows all available targets instead of truncating to the
+  first few objects.
+- The object list has a three-dot filter menu for ground, air, objective, spawn,
+  and other object classes.
+- Object sorting prioritizes likely squadmates, then sorts by distance from the
+  current source or player position.
+- Every map object has its own show/hide toggle.
+- A fire mission can have only one active source and one active target.
+- Units can be assigned as the source or target directly from the object list.
+- Left-clicking a unit on the map opens a menu to assign that unit as source or
+  target.
+- Left-clicking empty map space opens an attack-position menu that can set that
+  location as the target, with `Cancel` available to close the menu.
+- `Track POI` can bind the target to `point_of_interest` and keep it tracking as
+  8111 data refreshes.
+- Active source and target units are highlighted on both the map and object
+  list.
+- Map symbols use affiliation-colored fills with dark internal linework for
+  better readability over War Thunder map imagery.
+- The page layout centers the map and right-side task panels as a single
+  workspace and keeps the main content constrained to the viewport height to
+  avoid default vertical page scrolling.
+
 ## Development Requirements
 
 - Node.js and npm.
