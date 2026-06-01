@@ -209,10 +209,6 @@ message FusedTrack {
 
 Elliptical predicted area of interest for a target that has disappeared from observation.
 
-**Only generated for aircraft (class_id=0).** Ground vehicles (tanks, SPAA, etc.) do
-not benefit from velocity-based ellipse prediction due to their low speed and limited
-maneuverability — they simply fade out as regular stale tracks.
-
 The ellipse center is offset ahead of the anchor point along the velocity direction.
 The major axis aligns with the target's last known heading, and grows faster (velocity-dependent).
 The minor axis is perpendicular and grows slower (time-dependent).

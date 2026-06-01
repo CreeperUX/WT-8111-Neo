@@ -279,12 +279,6 @@ impl FusionEngine {
         let roi_ttl = self.config.roi_ttl_secs;
 
         for track in self.tracks.values() {
-            // ROI 预测仅对飞机 (class_id == 0) 生效
-            // 坦克等地面目标速度低、机动弱，圆形衰减即可
-            if track.class_id != 0 {
-                continue;
-            }
-
             let ms_since = now.duration_since(track.last_observed_at).as_millis() as u32;
 
             // 只在目标消失期间生成 ROI
