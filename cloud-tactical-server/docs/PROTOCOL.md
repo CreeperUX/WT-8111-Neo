@@ -207,18 +207,34 @@ message FusedTrack {
 
 ### `InterestRegion`
 
-Predicted area of interest for a target that has disappeared from observation.
+Elliptical predicted area of interest for a target that has disappeared from observation.
+
+The ellipse center is offset ahead of the anchor point along the velocity direction.
+The major axis aligns with the target's last known heading, and grows faster (velocity-dependent).
+The minor axis is perpendicular and grows slower (time-dependent).
 
 ```protobuf
 message InterestRegion {
-  string track_id = 1;          // associated track
-  uint32 x_u16 = 2;             // predicted center X
-  uint32 y_u16 = 3;
-  uint32 radius_u16 = 4;        // prediction radius (grows over time)
-  uint32 expires_in_ms = 5;     // remaining lifetime
-  uint32 confidence_u8 = 6;     // decays over time (255 → 20 over 15s)
+  string track_id = 1;            // associated track
+  uint32 center_x_u16 = 2;        // ellipse center X (velocity-predicted)
+  uint32 center_y_u16 = 3;        // ellipse center Y
+  uint32 anchor_x_u16 = 4;        // last known position X (for reference line)
+  uint32 anchor_y_u16 = 5;        // last known position Y
+  uint32 radius_major_u16 = 6;    // semi-major axis (along heading, grows fast)
+  uint32 radius_minor_u16 = 7;    // semi-minor axis (perpendicular, grows slow)
+  int32 heading_i16 = 8;          // major axis direction (deg × 100, 0 = north)
+  uint32 expires_in_ms = 9;       // remaining lifetime
+  uint32 confidence_u8 = 10;      // decays over time (255 → 20 over 15s)
 }
 ```
+
+**Rendering hint:** Draw an ellipse centered at `(center_x, center_y)`, rotated by `heading/100` degrees, with semi-axes `(radius_major, radius_minor)`. Optionally draw a line from `(anchor_x, anchor_y)` to `(center_x, center_y)` to show the target's last-known displacement.
+
+**Growth model:**
+- `radius_major` = 200 + speed_bonus + time_growth (max 5000)
+  - speed_bonus ≈ speed × elapsed × 800
+- `radius_minor` = 200 + 150 × √elapsed (max 2000)
+- `confidence` = 255 × (1 − elapsed / roi_ttl)
 
 ### `TacticalSummary`
 

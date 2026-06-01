@@ -30,13 +30,30 @@ message FusedTrack {
   uint32 flags = 13;            // 标志位
 }
 
+// 目标消失后的兴趣区域
+// 椭圆形状：中心沿速度方向偏移，主轴对齐运动方向
 message InterestRegion {
-  string track_id = 1;          // 关联的 trackId
-  uint32 x_u16 = 2;             // 预测中心 X
-  uint32 y_u16 = 3;             // 预测中心 Y
-  uint32 radius_u16 = 4;        // 预测半径 (量化)
-  uint32 expires_in_ms = 5;     // 剩余有效时间
-  uint32 confidence_u8 = 6;     // 置信度 0..255
+  string track_id = 1;            // 关联的 trackId
+
+  // 椭圆中心 (速度外推位置)
+  uint32 center_x_u16 = 2;
+  uint32 center_y_u16 = 3;
+
+  // 最后已知位置 (锚点，可画连线或菱形标记)
+  uint32 anchor_x_u16 = 4;
+  uint32 anchor_y_u16 = 5;
+
+  // 半长轴 (沿运动方向，增长较快)
+  uint32 radius_major_u16 = 6;
+
+  // 半短轴 (垂直于运动方向，增长较慢)
+  uint32 radius_minor_u16 = 7;
+
+  // 主轴方向 (度 × 100, 0=北)
+  int32 heading_i16 = 8;
+
+  uint32 expires_in_ms = 9;       // 剩余有效时间
+  uint32 confidence_u8 = 10;      // 置信度 0..255 (随时间衰减)
 }
 
 message TacticalSummary {
