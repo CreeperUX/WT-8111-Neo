@@ -2,8 +2,12 @@ import {
   Activity,
   Crosshair,
   Eraser,
+  Eye,
+  EyeOff,
+  Focus,
   LocateFixed,
   MapPinned,
+  MoreHorizontal,
   MousePointer2,
   RadioTower,
   RotateCcw,
@@ -13,7 +17,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWT8111Map } from "./hooks/useWT8111Map";
 import {
   bearingBetween,
@@ -32,6 +36,33 @@ interface MapMarker {
   y: number;
 }
 
+type FirePointRef =
+  | { kind: "player" }
+  | { kind: "marker"; markerId: number; label: string }
+  | {
+      kind: "object";
+      objectIndex: number;
+      icon?: string;
+      type?: string;
+      label: string;
+      colorSignature?: string;
+      initialX?: number;
+      initialY?: number;
+      lastX?: number;
+      lastY?: number;
+    }
+  | { kind: "poi" };
+
+interface FirePoint {
+  ref: FirePointRef;
+  label: string;
+  x: number;
+  y: number;
+  color: string;
+  objectIndex?: number;
+  objectKey?: string;
+}
+
 interface MapView {
   zoom: number;
   panX: number;
@@ -47,6 +78,20 @@ interface DragState {
   moved: boolean;
 }
 
+type MapSelection =
+  | {
+      kind: "object";
+      object: WTMapObject;
+      index: number;
+      x: number;
+      y: number;
+    }
+  | {
+      kind: "point";
+      x: number;
+      y: number;
+    };
+
 type Affiliation = "friend" | "hostile" | "neutral" | "unknown";
 type SymbolKind =
   | "armor"
@@ -59,28 +104,42 @@ type SymbolKind =
   | "player"
   | "unknown";
 
+type ObjectFilter = "all" | "ground" | "air" | "objective" | "spawn" | "other";
+
+const objectFilterOptions: { value: Exclude<ObjectFilter, "all">; label: string }[] = [
+  { value: "ground", label: "Ground" },
+  { value: "air", label: "Air" },
+  { value: "objective", label: "Objective" },
+  { value: "spawn", label: "Spawn" },
+  { value: "other", label: "Other" }
+];
+
 const affiliationTheme: Record<
   Affiliation,
-  { stroke: string; fill: string; label: string }
+  { stroke: string; fill: string; ink: string; label: string }
 > = {
   friend: {
-    stroke: "#48b9d6",
-    fill: "rgba(72, 185, 214, 0.1)",
+    stroke: "#31dfff",
+    fill: "rgba(49, 223, 255, 0.58)",
+    ink: "#061014",
     label: "Friend"
   },
   hostile: {
-    stroke: "#e85f55",
-    fill: "rgba(232, 95, 85, 0.1)",
+    stroke: "#ff6358",
+    fill: "rgba(255, 99, 88, 0.58)",
+    ink: "#130706",
     label: "Hostile"
   },
   neutral: {
-    stroke: "#85c977",
-    fill: "rgba(133, 201, 119, 0.1)",
+    stroke: "#93e979",
+    fill: "rgba(147, 233, 121, 0.54)",
+    ink: "#081207",
     label: "Neutral"
   },
   unknown: {
-    stroke: "#e8c15f",
-    fill: "rgba(232, 193, 95, 0.1)",
+    stroke: "#ffd25f",
+    fill: "rgba(255, 210, 95, 0.6)",
+    ink: "#151006",
     label: "Unknown"
   }
 };
@@ -130,6 +189,22 @@ function mapToScreenPoint(
   };
 }
 
+function pointDistanceSquared(
+  left: Pick<WTMapObject, "x" | "y">,
+  right: Pick<WTMapObject, "x" | "y">
+) {
+  if (!hasMapPoint(left) || !hasMapPoint(right)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const leftX = left.x ?? 0;
+  const leftY = left.y ?? 0;
+  const rightX = right.x ?? 0;
+  const rightY = right.y ?? 0;
+
+  return (leftX - rightX) ** 2 + (leftY - rightY) ** 2;
+}
+
 function formatNumber(value: number | undefined, digits = 0) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "--";
@@ -160,6 +235,84 @@ function objectColor(object: WTMapObject) {
 
 function objectLabel(object: WTMapObject) {
   return object.icon ?? object.type ?? "object";
+}
+
+function objectColorSignature(object: WTMapObject) {
+  const rgb = object["color[]"];
+  if (rgb) {
+    return rgb.join(",");
+  }
+
+  return object.color?.toLowerCase() ?? "";
+}
+
+function objectKey(object: WTMapObject, index: number) {
+  return [index, object.icon ?? "", object.type ?? ""].join(":");
+}
+
+function objectVisibilityKey(object: WTMapObject, index: number) {
+  return objectKey(object, index);
+}
+
+function markerRef(marker: MapMarker): FirePointRef {
+  return { kind: "marker", markerId: marker.id, label: marker.label };
+}
+
+function objectRef(
+  object: WTMapObject,
+  index: number,
+  previous?: Extract<FirePointRef, { kind: "object" }>
+): FirePointRef {
+  return {
+    kind: "object",
+    objectIndex: index,
+    icon: object.icon,
+    type: object.type,
+    label: objectLabel(object),
+    colorSignature: objectColorSignature(object),
+    initialX: previous?.initialX ?? object.x,
+    initialY: previous?.initialY ?? object.y,
+    lastX: object.x,
+    lastY: object.y
+  };
+}
+
+function firePointRefKey(ref?: FirePointRef) {
+  if (!ref) {
+    return "";
+  }
+
+  if (ref.kind === "player" || ref.kind === "poi") {
+    return ref.kind;
+  }
+
+  if (ref.kind === "marker") {
+    return `marker:${ref.markerId}`;
+  }
+
+  return [
+    "object",
+    ref.objectIndex,
+    ref.icon ?? "",
+    ref.type ?? "",
+    ref.colorSignature ?? "",
+    typeof ref.initialX === "number" ? ref.initialX.toFixed(6) : "x",
+    typeof ref.initialY === "number" ? ref.initialY.toFixed(6) : "y",
+    typeof ref.lastX === "number" ? ref.lastX.toFixed(6) : "x",
+    typeof ref.lastY === "number" ? ref.lastY.toFixed(6) : "y"
+  ].join(":");
+}
+
+function sameFirePointRef(left?: FirePointRef, right?: FirePointRef) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return firePointRefKey(left) === firePointRefKey(right);
+}
+
+function shortFirePointLabel(label: string) {
+  return label.length > 22 ? `${label.slice(0, 21)}...` : label;
 }
 
 function inferAffiliation(object: WTMapObject): Affiliation {
@@ -231,6 +384,274 @@ function inferSymbolKind(object: WTMapObject): SymbolKind {
   return "unknown";
 }
 
+function isPointOfInterestObject(object: WTMapObject) {
+  const text = `${object.icon ?? ""} ${object.type ?? ""}`.toLowerCase();
+  return (
+    text.includes("point_of_interest") ||
+    text.includes("point of interest") ||
+    text.includes("poi")
+  );
+}
+
+function classifyObject(object: WTMapObject): Exclude<ObjectFilter, "all"> {
+  const icon = (object.icon ?? "").toLowerCase();
+  const type = (object.type ?? "").toLowerCase();
+  const text = `${icon} ${type}`;
+
+  if (text.includes("respawn")) {
+    return "spawn";
+  }
+
+  if (
+    text.includes("capture") ||
+    text.includes("point_of_interest") ||
+    text.includes("bombing") ||
+    text.includes("defending") ||
+    text.includes("waypoint")
+  ) {
+    return "objective";
+  }
+
+  if (
+    text.includes("aircraft") ||
+    text.includes("fighter") ||
+    text.includes("bomber")
+  ) {
+    return "air";
+  }
+
+  if (
+    text.includes("ground") ||
+    text.includes("tank") ||
+    text.includes("armored") ||
+    text.includes("airdefence") ||
+    text.includes("airdefense") ||
+    text.includes("spaa") ||
+    text.includes("artillery") ||
+    text.includes("mortar") ||
+    text.includes("howitzer")
+  ) {
+    return "ground";
+  }
+
+  return "other";
+}
+
+function objectMatchesFilters(object: WTMapObject, filters: Set<Exclude<ObjectFilter, "all">>) {
+  return filters.has(classifyObject(object));
+}
+
+function formatActiveFilters(filters: Set<Exclude<ObjectFilter, "all">>) {
+  if (filters.size === objectFilterOptions.length) {
+    return "All classes";
+  }
+
+  if (filters.size === 0) {
+    return "No classes";
+  }
+
+  return objectFilterOptions
+    .filter((option) => filters.has(option.value))
+    .map((option) => option.label)
+    .join(", ");
+}
+
+function isLikelySquadmate(object: WTMapObject) {
+  const rgb = object["color[]"];
+  if (rgb) {
+    const [red, green, blue] = rgb;
+    if (red > 220 && green > 160 && green < 230 && blue < 80) {
+      return true;
+    }
+  }
+
+  return object.color?.toLowerCase() === "#fac81e";
+}
+
+function hasMapPoint(point: Pick<WTMapObject, "x" | "y"> | Pick<MapMarker, "x" | "y">) {
+  return typeof point.x === "number" && typeof point.y === "number";
+}
+
+function objectMatchesRefSignature(
+  ref: Extract<FirePointRef, { kind: "object" }>,
+  object: WTMapObject
+) {
+  if (object.icon !== ref.icon || object.type !== ref.type || !hasMapPoint(object)) {
+    return false;
+  }
+
+  return !ref.colorSignature || objectColorSignature(object) === ref.colorSignature;
+}
+
+function objectDistanceToRefAnchor(
+  ref: Extract<FirePointRef, { kind: "object" }>,
+  object: WTMapObject
+) {
+  if (!hasMapPoint(object)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const anchors = [
+    { x: ref.lastX, y: ref.lastY },
+    { x: ref.initialX, y: ref.initialY }
+  ].filter((anchor): anchor is { x: number; y: number } => (
+    typeof anchor.x === "number" && typeof anchor.y === "number"
+  ));
+
+  if (anchors.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.min(
+    ...anchors.map((anchor) => Math.hypot((object.x ?? 0) - anchor.x, (object.y ?? 0) - anchor.y))
+  );
+}
+
+function objectRefHasAnchor(ref: Extract<FirePointRef, { kind: "object" }>) {
+  return (
+    (typeof ref.initialX === "number" && typeof ref.initialY === "number") ||
+    (typeof ref.lastX === "number" && typeof ref.lastY === "number")
+  );
+}
+
+function matchesObjectRef(ref: FirePointRef | undefined, object: WTMapObject, index: number) {
+  if (!ref) {
+    return false;
+  }
+
+  if (ref.kind === "poi") {
+    return isPointOfInterestObject(object);
+  }
+
+  if (ref.kind !== "object") {
+    return false;
+  }
+
+  if (ref.objectIndex === index && objectMatchesRefSignature(ref, object)) {
+    return true;
+  }
+
+  if (!objectMatchesRefSignature(ref, object)) {
+    return false;
+  }
+
+  if (
+    typeof ref.initialX !== "number" &&
+    typeof ref.initialY !== "number" &&
+    typeof ref.lastX !== "number" &&
+    typeof ref.lastY !== "number"
+  ) {
+    return true;
+  }
+
+  return objectDistanceToRefAnchor(ref, object) < 0.018;
+}
+
+function findObjectForRef(ref: Extract<FirePointRef, { kind: "object" }>, objects: WTMapObject[]) {
+  const indexed = objects[ref.objectIndex];
+  if (
+    indexed &&
+    objectMatchesRefSignature(ref, indexed) &&
+    (!objectRefHasAnchor(ref) || objectDistanceToRefAnchor(ref, indexed) < 0.06)
+  ) {
+    return { object: indexed, index: ref.objectIndex };
+  }
+
+  const candidates = objects
+    .map((object, index) => ({
+      object,
+      index,
+      distance: objectDistanceToRefAnchor(ref, object)
+    }))
+    .filter(({ object }) => objectMatchesRefSignature(ref, object))
+    .sort((left, right) => left.distance - right.distance);
+
+  const closest = candidates[0];
+  if (closest && (!objectRefHasAnchor(ref) || closest.distance < 0.06)) {
+    return { object: closest.object, index: closest.index };
+  }
+
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function resolveFirePoint(
+  ref: FirePointRef | undefined,
+  objects: WTMapObject[],
+  markers: MapMarker[]
+): FirePoint | undefined {
+  if (!ref) {
+    return undefined;
+  }
+
+  if (ref.kind === "marker") {
+    const marker = markers.find((item) => item.id === ref.markerId);
+    if (!marker || !hasMapPoint(marker)) {
+      return undefined;
+    }
+
+    return {
+      ref,
+      label: marker.label,
+      x: marker.x,
+      y: marker.y,
+      color: "#e7bf62"
+    };
+  }
+
+  if (ref.kind === "poi") {
+    const poi = objects.find((object) => isPointOfInterestObject(object) && hasMapPoint(object));
+    if (!poi || typeof poi.x !== "number" || typeof poi.y !== "number") {
+      return undefined;
+    }
+
+    return {
+      ref,
+      label: "point_of_interest",
+      x: poi.x,
+      y: poi.y,
+      color: objectColor(poi)
+    };
+  }
+
+  const match = ref.kind === "player" ? undefined : findObjectForRef(ref, objects);
+  const object = ref.kind === "player" ? findPlayer(objects) : match?.object;
+  if (!object || typeof object.x !== "number" || typeof object.y !== "number") {
+    return undefined;
+  }
+
+  const resolvedRef = ref.kind === "object" && match ? objectRef(object, match.index, ref) : ref;
+
+  return {
+    ref: resolvedRef,
+    label: ref.kind === "player" ? "Player" : ref.label,
+    x: object.x,
+    y: object.y,
+    color: objectColor(object),
+    objectIndex: ref.kind === "object" ? match?.index : undefined,
+    objectKey: ref.kind === "object" && match ? objectVisibilityKey(object, match.index) : undefined
+  };
+}
+
+function isObjectFirePoint(point: FirePoint | undefined, object: WTMapObject, index: number) {
+  if (!point) {
+    return false;
+  }
+
+  if (point.ref.kind === "player") {
+    return object.icon === "Player";
+  }
+
+  if (point.ref.kind === "poi") {
+    return isPointOfInterestObject(object);
+  }
+
+  if (point.ref.kind !== "object") {
+    return false;
+  }
+
+  return point.objectIndex === index && objectMatchesRefSignature(point.ref, object);
+}
+
 function NatoFrame({
   affiliation,
   width,
@@ -243,8 +664,8 @@ function NatoFrame({
   const theme = affiliationTheme[affiliation];
   const common = {
     fill: theme.fill,
-    stroke: theme.stroke,
-    strokeWidth: 0.0016,
+    stroke: theme.ink,
+    strokeWidth: 0.0022,
     vectorEffect: "non-scaling-stroke" as const
   };
 
@@ -296,11 +717,12 @@ function NatoIcon({
   height: number;
   heading: number;
 }) {
-  const stroke = affiliationTheme[affiliation].stroke;
+  const theme = affiliationTheme[affiliation];
+  const stroke = theme.ink;
   const iconProps = {
     fill: "none",
     stroke,
-    strokeWidth: 0.0014,
+    strokeWidth: 0.0024,
     vectorEffect: "non-scaling-stroke" as const,
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const
@@ -310,9 +732,9 @@ function NatoIcon({
     return (
       <polygon
         points={`0,${-height * 0.42} ${width * 0.17},${height * 0.28} ${-width * 0.17},${height * 0.28}`}
-        fill={stroke}
-        stroke="#050708"
-        strokeWidth="0.0012"
+        fill={theme.stroke}
+        stroke={theme.ink}
+        strokeWidth="0.0022"
         transform={`rotate(${heading})`}
         vectorEffect="non-scaling-stroke"
       />
@@ -333,7 +755,17 @@ function NatoIcon({
   }
 
   if (kind === "artillery") {
-    return <circle cx="0" cy="0" r={height * 0.15} fill={stroke} />;
+    return (
+      <circle
+        cx="0"
+        cy="0"
+        r={height * 0.17}
+        fill={theme.ink}
+        stroke={theme.ink}
+        strokeWidth="0.0016"
+        vectorEffect="non-scaling-stroke"
+      />
+    );
   }
 
   if (kind === "installation") {
@@ -374,11 +806,15 @@ function NatoIcon({
 function NatoMapSymbol({
   object,
   index,
-  view
+  view,
+  isFireSource,
+  isFireTarget
 }: {
   object: WTMapObject;
   index: number;
   view: MapView;
+  isFireSource?: boolean;
+  isFireTarget?: boolean;
 }) {
   if (typeof object.x !== "number" || typeof object.y !== "number") {
     return null;
@@ -392,19 +828,42 @@ function NatoMapSymbol({
   const affiliation = inferAffiliation(object);
   const kind = inferSymbolKind(object);
   const isPlayer = kind === "player";
-  const width = isPlayer ? 0.03 : 0.022;
-  const height = isPlayer ? 0.021 : 0.015;
+  const width = isPlayer ? 0.034 : 0.026;
+  const height = isPlayer ? 0.025 : 0.019;
   const heading =
     typeof object.dx === "number" && typeof object.dy === "number"
       ? (Math.atan2(object.dx, -object.dy) * 180) / Math.PI
       : 0;
+  const symbolClassName = [
+    "map-symbol",
+    isFireSource ? "fire-source-symbol" : "",
+    isFireTarget ? "fire-target-symbol" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <g
       key={`${objectLabel(object)}-${index}`}
+      className={symbolClassName}
       transform={`translate(${screen.x} ${screen.y})`}
       aria-label={`${affiliationTheme[affiliation].label} ${objectLabel(object)}`}
     >
+      {(isFireSource || isFireTarget) && (
+        <>
+          <circle
+            r={isFireSource ? "0.027" : "0.024"}
+            className={isFireSource ? "fire-source-ring" : "fire-target-ring"}
+            vectorEffect="non-scaling-stroke"
+          />
+          <g className={isFireSource ? "fire-role-label source" : "fire-role-label target"}>
+            <circle cx="0.024" cy="-0.024" r="0.01" vectorEffect="non-scaling-stroke" />
+            <text x="0.024" y="-0.0205">
+              {isFireSource ? "S" : "T"}
+            </text>
+          </g>
+        </>
+      )}
       <NatoFrame affiliation={affiliation} width={width} height={height} />
       <NatoIcon
         kind={kind}
@@ -422,21 +881,31 @@ function MapSurface({
   objects,
   markers,
   activeMarker,
-  setActiveMarker
+  sourcePoint,
+  targetPoint,
+  hiddenObjectKeys,
+  setSourceRef,
+  setTargetRef,
+  setMapTarget
 }: {
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
   markers: MapMarker[];
   activeMarker?: MapMarker;
-  setActiveMarker: (marker: MapMarker) => void;
+  sourcePoint?: FirePoint;
+  targetPoint?: FirePoint;
+  hiddenObjectKeys: Set<string>;
+  setSourceRef: (ref: FirePointRef) => void;
+  setTargetRef: (ref: FirePointRef) => void;
+  setMapTarget: (point: Pick<MapMarker, "x" | "y">) => void;
 }) {
-  const player = findPlayer(objects);
   const imageUrl = getMapImageUrl(mapInfo);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const [view, setView] = useState<MapView>({ zoom: 1, panX: 0, panY: 0 });
-  const playerScreen = mapToScreenPoint(player, view);
-  const activeMarkerScreen = mapToScreenPoint(activeMarker, view);
+  const [selection, setSelection] = useState<MapSelection | undefined>();
+  const sourceScreen = mapToScreenPoint(sourcePoint, view);
+  const targetScreen = mapToScreenPoint(targetPoint, view);
 
   function stagePointToMapPoint(clientX: number, clientY: number) {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -456,18 +925,22 @@ function MapSurface({
     return { x, y };
   }
 
-  function placeMarker(clientX: number, clientY: number) {
-    const point = stagePointToMapPoint(clientX, clientY);
-    if (!point) {
-      return;
-    }
+  function findObjectAtPoint(point: { x: number; y: number }) {
+    const hitRadius = 0.026 / view.zoom;
+    const hitRadiusSquared = hitRadius * hitRadius;
 
-    setActiveMarker({
-      id: Date.now(),
-      label: "Target",
-      x: point.x,
-      y: point.y
-    });
+    return objects
+      .map((object, index) => ({ object, index, key: objectVisibilityKey(object, index) }))
+      .filter(
+        ({ object, key }) =>
+          hasMapPoint(object) &&
+          !hiddenObjectKeys.has(key) &&
+          pointDistanceSquared(object, point) <= hitRadiusSquared
+      )
+      .sort(
+        (left, right) =>
+          pointDistanceSquared(left.object, point) - pointDistanceSquared(right.object, point)
+      )[0];
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -511,7 +984,29 @@ function MapSurface({
 
     dragRef.current = null;
     if (!drag.moved) {
-      placeMarker(event.clientX, event.clientY);
+      const point = stagePointToMapPoint(event.clientX, event.clientY);
+      if (!point) {
+        setSelection(undefined);
+        return;
+      }
+
+      const hit = findObjectAtPoint(point);
+      if (hit) {
+        setSelection({
+          kind: "object",
+          object: hit.object,
+          index: hit.index,
+          x: point.x,
+          y: point.y
+        });
+        return;
+      }
+
+      setSelection({
+        kind: "point",
+        x: point.x,
+        y: point.y
+      });
     }
   }
 
@@ -602,21 +1097,25 @@ function MapSurface({
           </svg>
         </div>
         <svg className="symbol-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-          {objects.map((object, index) => (
-            <NatoMapSymbol
-              key={`${objectLabel(object)}-${index}`}
-              object={object}
-              index={index}
-              view={view}
-            />
-          ))}
+          {objects.map((object, index) =>
+            hiddenObjectKeys.has(objectVisibilityKey(object, index)) ? null : (
+              <NatoMapSymbol
+                key={objectKey(object, index)}
+                object={object}
+                index={index}
+                view={view}
+                isFireSource={isObjectFirePoint(sourcePoint, object, index)}
+                isFireTarget={isObjectFirePoint(targetPoint, object, index)}
+              />
+            )
+          )}
 
-          {playerScreen && activeMarkerScreen && (
+          {sourceScreen && targetScreen && (
             <line
-              x1={playerScreen.x}
-              y1={playerScreen.y}
-              x2={activeMarkerScreen.x}
-              y2={activeMarkerScreen.y}
+              x1={sourceScreen.x}
+              y1={sourceScreen.y}
+              x2={targetScreen.x}
+              y2={targetScreen.y}
               className="range-line"
               vectorEffect="non-scaling-stroke"
             />
@@ -630,7 +1129,23 @@ function MapSurface({
             }
 
             return (
-              <g key={marker.id} transform={`translate(${screen.x} ${screen.y})`}>
+              <g
+                key={marker.id}
+                className={sameFirePointRef(sourcePoint?.ref, markerRef(marker)) ? "fire-source-symbol" : undefined}
+                transform={`translate(${screen.x} ${screen.y})`}
+              >
+                {(sameFirePointRef(sourcePoint?.ref, markerRef(marker)) ||
+                  sameFirePointRef(targetPoint?.ref, markerRef(marker))) && (
+                  <circle
+                    r={sameFirePointRef(sourcePoint?.ref, markerRef(marker)) ? "0.023" : "0.021"}
+                    className={
+                      sameFirePointRef(sourcePoint?.ref, markerRef(marker))
+                        ? "fire-source-ring"
+                        : "fire-target-ring"
+                    }
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
                 <circle
                   r={isActive ? "0.014" : "0.011"}
                   className={isActive ? "marker-ring active" : "marker-ring"}
@@ -651,6 +1166,59 @@ function MapSurface({
             );
           })}
         </svg>
+
+        {selection && (
+          <div
+            className="map-selection-menu"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              left: `${clamp(view.panX + selection.x * view.zoom, 0.04, 0.84) * 100}%`,
+              top: `${clamp(view.panY + selection.y * view.zoom, 0.05, 0.84) * 100}%`
+            }}
+          >
+            <div className="selection-title">
+              {selection.kind === "object" ? objectLabel(selection.object) : "Attack Position"}
+            </div>
+            {selection.kind === "point" && (
+              <div className="selection-subtitle">{formatWorldPoint(selection, mapInfo)}</div>
+            )}
+            <div className="selection-actions">
+              {selection.kind === "object" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSourceRef(objectRef(selection.object, selection.index));
+                    setSelection(undefined);
+                  }}
+                >
+                  Set Source
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (selection.kind === "object") {
+                    setTargetRef(objectRef(selection.object, selection.index));
+                  } else {
+                    setMapTarget(selection);
+                  }
+                  setSelection(undefined);
+                }}
+              >
+                Set Target
+              </button>
+              <button
+                className="selection-cancel"
+                type="button"
+                onClick={() => setSelection(undefined)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -661,18 +1229,68 @@ function ToolPanel({
   objects,
   markers,
   activeMarker,
+  sourcePoint,
+  targetPoint,
+  objectFilters,
+  hiddenObjectKeys,
+  filterMenuOpen,
+  setFilterMenuOpen,
+  toggleObjectFilter,
+  setAllObjectFilters,
+  toggleObjectVisibility,
+  setSourceRef,
+  setTargetRef,
   clearMarkers
 }: {
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
   markers: MapMarker[];
   activeMarker?: MapMarker;
+  sourcePoint?: FirePoint;
+  targetPoint?: FirePoint;
+  objectFilters: Set<Exclude<ObjectFilter, "all">>;
+  hiddenObjectKeys: Set<string>;
+  filterMenuOpen: boolean;
+  setFilterMenuOpen: (open: boolean) => void;
+  toggleObjectFilter: (filter: Exclude<ObjectFilter, "all">) => void;
+  setAllObjectFilters: (enabled: boolean) => void;
+  toggleObjectVisibility: (key: string) => void;
+  setSourceRef: (ref: FirePointRef) => void;
+  setTargetRef: (ref: FirePointRef) => void;
   clearMarkers: () => void;
 }) {
   const player = findPlayer(objects);
-  const range = player && activeMarker ? distanceBetween(player, activeMarker, mapInfo) : undefined;
-  const bearing = player && activeMarker ? bearingBetween(player, activeMarker) : undefined;
+  const range = sourcePoint && targetPoint ? distanceBetween(sourcePoint, targetPoint, mapInfo) : undefined;
+  const bearing = sourcePoint && targetPoint ? bearingBetween(sourcePoint, targetPoint) : undefined;
   const targetObjects = objects.filter((object) => object.icon !== "Player");
+  const visibleObjectCount = objects.filter(
+    (object, index) => !hiddenObjectKeys.has(objectVisibilityKey(object, index))
+  ).length;
+  const distanceOrigin = sourcePoint ?? (player ? resolveFirePoint({ kind: "player" }, objects, markers) : undefined);
+  const filteredObjects = objects
+    .map((object, index) => ({ object, index, key: objectVisibilityKey(object, index) }))
+    .filter(({ object }) => objectMatchesFilters(object, objectFilters))
+    .sort((left, right) => {
+      const leftSquad = isLikelySquadmate(left.object) ? 0 : 1;
+      const rightSquad = isLikelySquadmate(right.object) ? 0 : 1;
+      if (leftSquad !== rightSquad) {
+        return leftSquad - rightSquad;
+      }
+
+      const leftDistance = distanceOrigin
+        ? distanceBetween(distanceOrigin, left.object, mapInfo) ?? Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY;
+      const rightDistance = distanceOrigin
+        ? distanceBetween(distanceOrigin, right.object, mapInfo) ?? Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY;
+
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+
+      return left.index - right.index;
+    });
+  const hasPointOfInterest = objects.some((object) => isPointOfInterestObject(object) && hasMapPoint(object));
 
   return (
     <aside className="tool-panel">
@@ -686,16 +1304,60 @@ function ToolPanel({
           <strong>{range === undefined ? "--" : `${range.toFixed(0)} u`}</strong>
           <span>Bearing</span>
           <strong>{bearing === undefined ? "--" : `${bearing.toFixed(1)} deg`}</strong>
+          <span>Source</span>
+          <strong>{sourcePoint ? shortFirePointLabel(sourcePoint.label) : "--"}</strong>
           <span>Target</span>
-          <strong>{formatWorldPoint(activeMarker, mapInfo)}</strong>
-          <span>Player</span>
-          <strong>{formatWorldPoint(player, mapInfo)}</strong>
+          <strong>{targetPoint ? shortFirePointLabel(targetPoint.label) : "--"}</strong>
+          <span>Source Pos</span>
+          <strong>{formatWorldPoint(sourcePoint, mapInfo)}</strong>
+          <span>Target Pos</span>
+          <strong>{formatWorldPoint(targetPoint, mapInfo)}</strong>
         </div>
         <div className="tool-actions">
           <button className="icon-button" type="button" onClick={clearMarkers} title="Clear markers">
             <Eraser size={18} />
           </button>
-          <span>{activeMarker ? "测距点已放置" : "点击地图放置测距点"}</span>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => {
+              if (activeMarker) {
+                setTargetRef(markerRef(activeMarker));
+              }
+            }}
+            disabled={!activeMarker}
+            title="Use latest marker as target"
+          >
+            <Target size={18} />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setTargetRef({ kind: "poi" })}
+            disabled={!hasPointOfInterest}
+            title="Track point_of_interest as target"
+          >
+            <Focus size={18} />
+          </button>
+          <span>{activeMarker ? "Latest marker ready" : "Click a unit to select it"}</span>
+        </div>
+        <div className="quick-selects">
+          <button
+            className={sameFirePointRef(sourcePoint?.ref, { kind: "player" }) ? "choice-button selected" : "choice-button"}
+            type="button"
+            onClick={() => setSourceRef({ kind: "player" })}
+            disabled={!player}
+          >
+            Player as source
+          </button>
+          <button
+            className={sameFirePointRef(targetPoint?.ref, { kind: "poi" }) ? "choice-button selected" : "choice-button"}
+            type="button"
+            onClick={() => setTargetRef({ kind: "poi" })}
+            disabled={!hasPointOfInterest}
+          >
+            Track POI
+          </button>
         </div>
       </section>
 
@@ -717,10 +1379,108 @@ function ToolPanel({
             <strong>{markers.length}</strong>
             <span>Markers</span>
           </div>
+          <div>
+            <strong>{visibleObjectCount}</strong>
+            <span>Shown</span>
+          </div>
+          <div>
+            <strong>{filteredObjects.length}</strong>
+            <span>Filtered</span>
+          </div>
         </div>
+        <div className="object-menu-bar">
+          <span>{formatActiveFilters(objectFilters)}</span>
+          <button
+            className="icon-button compact"
+            type="button"
+            title="Object filters"
+            onClick={() => setFilterMenuOpen(!filterMenuOpen)}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {filterMenuOpen && (
+            <div className="filter-menu">
+              <div className="filter-menu-title">Display Classes</div>
+              <label className="filter-option">
+                <input
+                  type="checkbox"
+                  checked={objectFilters.size === objectFilterOptions.length}
+                  onChange={(event) => setAllObjectFilters(event.currentTarget.checked)}
+                />
+                <span>All classes</span>
+              </label>
+              {objectFilterOptions.map((option) => (
+                <label className="filter-option" key={option.value}>
+                  <input
+                    type="checkbox"
+                    checked={objectFilters.has(option.value)}
+                    onChange={() => toggleObjectFilter(option.value)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="object-list-head">
+          <span>Unit</span>
+          <span>Coord</span>
+          <span>Show</span>
+          <span>S/T</span>
+        </div>
+        {markers.length > 0 && (
+          <div className="marker-list">
+            {markers.map((marker, index) => (
+              <div className="object-row marker-row" key={marker.id}>
+                <span className="object-dot marker-dot-swatch" />
+                <span>{marker.label} {index + 1}</span>
+                <strong>{formatWorldPoint(marker, mapInfo)}</strong>
+                <div className="object-actions">
+                  <button
+                    type="button"
+                    className={
+                      sameFirePointRef(sourcePoint?.ref, markerRef(marker))
+                        ? "mini-action selected"
+                        : "mini-action"
+                    }
+                    onClick={() => setSourceRef(markerRef(marker))}
+                    title="Set marker as fire source"
+                  >
+                    S
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      sameFirePointRef(targetPoint?.ref, markerRef(marker))
+                        ? "mini-action selected"
+                        : "mini-action"
+                    }
+                    onClick={() => setTargetRef(markerRef(marker))}
+                    title="Set marker as target"
+                  >
+                    T
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="object-list">
-          {objects.slice(0, 12).map((object, index) => (
-            <div className="object-row" key={`${objectLabel(object)}-${index}`}>
+          {filteredObjects.map(({ object, index, key }) => {
+            const isVisible = !hiddenObjectKeys.has(key);
+            const isSource = isObjectFirePoint(sourcePoint, object, index);
+            const isTarget = isObjectFirePoint(targetPoint, object, index);
+            const rowClassName = [
+              "object-row",
+              !isVisible ? "hidden-object" : "",
+              isSource ? "selected-source-row" : "",
+              isTarget ? "selected-target-row" : ""
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            return (
+            <div className={rowClassName} key={key}>
               <span className="object-dot" style={{ background: objectColor(object) }} />
               <span>{objectLabel(object)}</span>
               <strong>
@@ -728,8 +1488,37 @@ function ToolPanel({
                   ? `${(object.x * 100).toFixed(1)}, ${(object.y * 100).toFixed(1)}`
                   : "--"}
               </strong>
+              <button
+                type="button"
+                className={isVisible ? "visibility-button" : "visibility-button hidden"}
+                onClick={() => toggleObjectVisibility(key)}
+                title={isVisible ? "Hide object" : "Show object"}
+              >
+                {isVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+              </button>
+              <div className="object-actions">
+                <button
+                  type="button"
+                  className={isSource ? "mini-action selected source" : "mini-action"}
+                  onClick={() => setSourceRef(objectRef(object, index))}
+                  disabled={!hasMapPoint(object)}
+                  title="Set as fire source"
+                >
+                  S
+                </button>
+                <button
+                  type="button"
+                  className={isTarget ? "mini-action selected target" : "mini-action"}
+                  onClick={() => setTargetRef(objectRef(object, index))}
+                  disabled={!hasMapPoint(object)}
+                  title="Set as target"
+                >
+                  T
+                </button>
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -766,6 +1555,13 @@ function ToolPanel({
 export default function App() {
   const mapData = useWT8111Map();
   const [markers, setMarkers] = useState<MapMarker[]>([]);
+  const [objectFilters, setObjectFilters] = useState<Set<Exclude<ObjectFilter, "all">>>(
+    () => new Set(objectFilterOptions.map((option) => option.value))
+  );
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [hiddenObjectKeys, setHiddenObjectKeys] = useState<Set<string>>(() => new Set());
+  const [sourceRef, setSourceRef] = useState<FirePointRef>({ kind: "player" });
+  const [targetRef, setTargetRef] = useState<FirePointRef | undefined>();
   const activeMarker = markers[markers.length - 1];
   const objects = mapData.mapObjects ?? [];
 
@@ -775,9 +1571,80 @@ export default function App() {
     : "--";
 
   const player = useMemo(() => findPlayer(objects), [objects]);
+  const sourcePoint = useMemo(
+    () => resolveFirePoint(sourceRef, objects, markers),
+    [sourceRef, objects, markers]
+  );
+  const targetPoint = useMemo(
+    () => resolveFirePoint(targetRef, objects, markers),
+    [targetRef, objects, markers]
+  );
 
-  function addMarker(marker: MapMarker) {
-    setMarkers((previous) => [...previous.slice(-3), marker]);
+  useEffect(() => {
+    if (sourceRef.kind === "object" && sourcePoint?.ref.kind === "object") {
+      if (firePointRefKey(sourceRef) !== firePointRefKey(sourcePoint.ref)) {
+        setSourceRef(sourcePoint.ref);
+      }
+    }
+  }, [sourceRef, sourcePoint]);
+
+  useEffect(() => {
+    if (targetRef?.kind === "object" && targetPoint?.ref.kind === "object") {
+      if (firePointRefKey(targetRef) !== firePointRefKey(targetPoint.ref)) {
+        setTargetRef(targetPoint.ref);
+      }
+    }
+  }, [targetRef, targetPoint]);
+
+  function clearMarkers() {
+    setMarkers([]);
+    if (targetRef?.kind === "marker") {
+      setTargetRef(undefined);
+    }
+    if (sourceRef.kind === "marker") {
+      setSourceRef({ kind: "player" });
+    }
+  }
+
+  function toggleObjectVisibility(key: string) {
+    setHiddenObjectKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function toggleObjectFilter(filter: Exclude<ObjectFilter, "all">) {
+    setObjectFilters((previous) => {
+      const next = new Set(previous);
+      if (next.has(filter)) {
+        next.delete(filter);
+      } else {
+        next.add(filter);
+      }
+
+      return next;
+    });
+  }
+
+  function setAllObjectFilters(enabled: boolean) {
+    setObjectFilters(enabled ? new Set(objectFilterOptions.map((option) => option.value)) : new Set());
+  }
+
+  function setMapTarget(point: Pick<MapMarker, "x" | "y">) {
+    const marker: MapMarker = {
+      id: Date.now(),
+      label: "Target",
+      x: point.x,
+      y: point.y
+    };
+
+    setMarkers((previous) => [...previous, marker]);
+    setTargetRef(markerRef(marker));
   }
 
   return (
@@ -809,14 +1676,30 @@ export default function App() {
           objects={objects}
           markers={markers}
           activeMarker={activeMarker}
-          setActiveMarker={addMarker}
+          sourcePoint={sourcePoint}
+          targetPoint={targetPoint}
+          hiddenObjectKeys={hiddenObjectKeys}
+          setSourceRef={setSourceRef}
+          setTargetRef={setTargetRef}
+          setMapTarget={setMapTarget}
         />
         <ToolPanel
           mapInfo={mapData.mapInfo}
           objects={objects}
           markers={markers}
           activeMarker={activeMarker}
-          clearMarkers={() => setMarkers([])}
+          sourcePoint={sourcePoint}
+          targetPoint={targetPoint}
+          objectFilters={objectFilters}
+          hiddenObjectKeys={hiddenObjectKeys}
+          filterMenuOpen={filterMenuOpen}
+          setFilterMenuOpen={setFilterMenuOpen}
+          toggleObjectFilter={toggleObjectFilter}
+          setAllObjectFilters={setAllObjectFilters}
+          toggleObjectVisibility={toggleObjectVisibility}
+          setSourceRef={setSourceRef}
+          setTargetRef={setTargetRef}
+          clearMarkers={clearMarkers}
         />
       </section>
 
