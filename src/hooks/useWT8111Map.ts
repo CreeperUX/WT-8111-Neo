@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { pollWT8111Map, type WTMapPollSnapshot } from "../lib/wt8111";
 
-const MAP_POLL_INTERVAL_MS = 200;
+const MAP_POLL_INTERVAL_MS = 500;
 
 export function useWT8111Map() {
   const [snapshot, setSnapshot] = useState<WTMapPollSnapshot>({

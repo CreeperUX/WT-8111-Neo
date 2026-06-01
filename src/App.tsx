@@ -17,7 +17,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useWT8111Map } from "./hooks/useWT8111Map";
 import {
   bearingBetween,
@@ -61,6 +61,34 @@ interface FirePoint {
   color: string;
   objectIndex?: number;
   objectKey?: string;
+}
+
+interface TrackSample {
+  x: number;
+  y: number;
+  at: number;
+}
+
+interface TargetObservation {
+  fingerprint: string;
+  label: string;
+  x: number;
+  y: number;
+  objectKey: string;
+  color: string;
+}
+
+interface HostileTrack {
+  id: string;
+  fingerprint: string;
+  label: string;
+  color: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  objectKey?: string;
+  samples: TrackSample[];
+  velocityX: number;
+  velocityY: number;
 }
 
 interface MapView {
@@ -147,6 +175,10 @@ const affiliationTheme: Record<
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
+const HOSTILE_TRACK_HISTORY_MS = 3000;
+const HOSTILE_ROI_RETENTION_MS = 15000;
+const EMPTY_MAP_OBJECTS: WTMapObject[] = [];
+const GRID_LINES = Array.from({ length: 9 }, (_, index) => index / 8);
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -252,6 +284,15 @@ function objectKey(object: WTMapObject, index: number) {
 
 function objectVisibilityKey(object: WTMapObject, index: number) {
   return objectKey(object, index);
+}
+
+function targetFingerprint(object: WTMapObject) {
+  return [
+    inferAffiliation(object),
+    objectLabel(object).toLowerCase(),
+    objectColorSignature(object),
+    classifyObject(object)
+  ].join("|");
 }
 
 function markerRef(marker: MapMarker): FirePointRef {
@@ -470,6 +511,174 @@ function isLikelySquadmate(object: WTMapObject) {
 
 function hasMapPoint(point: Pick<WTMapObject, "x" | "y"> | Pick<MapMarker, "x" | "y">) {
   return typeof point.x === "number" && typeof point.y === "number";
+}
+
+function sortObjectsByTacticalPriority(
+  objects: WTMapObject[],
+  mapInfo: WTMapInfo | undefined,
+  distanceOrigin: FirePoint | undefined
+) {
+  return objects
+    .map((object, index) => ({
+      object,
+      index,
+      key: objectVisibilityKey(object, index),
+      squadPriority: isLikelySquadmate(object) ? 0 : 1,
+      distance: distanceOrigin
+        ? distanceBetween(distanceOrigin, object, mapInfo) ?? Number.POSITIVE_INFINITY
+        : Number.POSITIVE_INFINITY
+    }))
+    .sort((left, right) => {
+      if (left.squadPriority !== right.squadPriority) {
+        return left.squadPriority - right.squadPriority;
+      }
+
+      if (left.distance !== right.distance) {
+        return left.distance - right.distance;
+      }
+
+      return left.index - right.index;
+    });
+}
+
+function collectHostileObservations(objects: WTMapObject[]): TargetObservation[] {
+  return objects
+    .map((object, index) => ({ object, index }))
+    .filter(({ object }) => inferAffiliation(object) === "hostile" && hasMapPoint(object))
+    .map(({ object, index }) => ({
+      fingerprint: targetFingerprint(object),
+      label: objectLabel(object),
+      x: object.x ?? 0,
+      y: object.y ?? 0,
+      objectKey: objectVisibilityKey(object, index),
+      color: objectColor(object)
+    }));
+}
+
+function predictTrackPoint(track: HostileTrack, at: number): TrackSample {
+  const last = track.samples[track.samples.length - 1];
+  if (!last) {
+    return { x: 0, y: 0, at };
+  }
+
+  const elapsedSeconds = Math.max(0, (at - track.lastSeenAt) / 1000);
+  return {
+    x: clamp(last.x + track.velocityX * elapsedSeconds, 0, 1),
+    y: clamp(last.y + track.velocityY * elapsedSeconds, 0, 1),
+    at
+  };
+}
+
+function deriveVelocity(samples: TrackSample[], fallback: Pick<HostileTrack, "velocityX" | "velocityY">) {
+  const last = samples[samples.length - 1];
+  const first = samples.find((sample) => last && last.at - sample.at >= 250) ?? samples[0];
+  if (!first || !last || first.at === last.at) {
+    return fallback;
+  }
+
+  const elapsedSeconds = (last.at - first.at) / 1000;
+  return {
+    velocityX: (last.x - first.x) / elapsedSeconds,
+    velocityY: (last.y - first.y) / elapsedSeconds
+  };
+}
+
+function appendTrackSample(track: HostileTrack, observation: TargetObservation, observedAt: number): HostileTrack {
+  const sample = { x: observation.x, y: observation.y, at: observedAt };
+  const previousSamples =
+    track.samples[track.samples.length - 1]?.at === observedAt
+      ? track.samples.slice(0, -1)
+      : track.samples;
+  const samples = [...previousSamples, sample].filter(
+    (item) => observedAt - item.at <= HOSTILE_TRACK_HISTORY_MS
+  );
+  const velocity = deriveVelocity(samples, track);
+
+  return {
+    ...track,
+    fingerprint: observation.fingerprint,
+    label: observation.label,
+    color: observation.color,
+    lastSeenAt: observedAt,
+    objectKey: observation.objectKey,
+    samples,
+    velocityX: velocity.velocityX,
+    velocityY: velocity.velocityY
+  };
+}
+
+function createHostileTrack(observation: TargetObservation, observedAt: number, ordinal: number): HostileTrack {
+  return {
+    id: `${observation.fingerprint}:${observedAt}:${ordinal}`,
+    fingerprint: observation.fingerprint,
+    label: observation.label,
+    color: observation.color,
+    firstSeenAt: observedAt,
+    lastSeenAt: observedAt,
+    objectKey: observation.objectKey,
+    samples: [{ x: observation.x, y: observation.y, at: observedAt }],
+    velocityX: 0,
+    velocityY: 0
+  };
+}
+
+function matchHostileTrack(
+  observation: TargetObservation,
+  tracks: HostileTrack[],
+  usedTrackIds: Set<string>,
+  observedAt: number
+) {
+  const candidates = tracks
+    .filter((track) => track.fingerprint === observation.fingerprint && !usedTrackIds.has(track.id))
+    .map((track) => {
+      const predicted = predictTrackPoint(track, observedAt);
+      const distance = Math.hypot(observation.x - predicted.x, observation.y - predicted.y);
+      const elapsedSeconds = Math.max(0, (observedAt - track.lastSeenAt) / 1000);
+      const speed = Math.hypot(track.velocityX, track.velocityY);
+      const gate = 0.025 + Math.min(0.06, speed * elapsedSeconds * 1.8);
+
+      return { track, distance, gate };
+    })
+    .filter(({ distance, gate }) => distance <= gate)
+    .sort((left, right) => left.distance - right.distance);
+
+  return candidates[0]?.track;
+}
+
+function updateHostileTracks(
+  previousTracks: HostileTrack[],
+  objects: WTMapObject[],
+  observedAt: number
+): HostileTrack[] {
+  const observations = collectHostileObservations(objects);
+  const usedTrackIds = new Set<string>();
+  const nextTracks = new Map<string, HostileTrack>();
+
+  observations.forEach((observation, index) => {
+    const match = matchHostileTrack(observation, previousTracks, usedTrackIds, observedAt);
+    if (match) {
+      usedTrackIds.add(match.id);
+      nextTracks.set(match.id, appendTrackSample(match, observation, observedAt));
+      return;
+    }
+
+    const created = createHostileTrack(observation, observedAt, index);
+    usedTrackIds.add(created.id);
+    nextTracks.set(created.id, created);
+  });
+
+  previousTracks.forEach((track) => {
+    if (usedTrackIds.has(track.id) || observedAt - track.lastSeenAt > HOSTILE_ROI_RETENTION_MS) {
+      return;
+    }
+
+    nextTracks.set(track.id, {
+      ...track,
+      samples: track.samples.filter((sample) => observedAt - sample.at <= HOSTILE_TRACK_HISTORY_MS)
+    });
+  });
+
+  return Array.from(nextTracks.values());
 }
 
 function objectMatchesRefSignature(
@@ -803,7 +1012,7 @@ function NatoIcon({
   );
 }
 
-function NatoMapSymbol({
+const NatoMapSymbol = memo(function NatoMapSymbol({
   object,
   index,
   view,
@@ -874,11 +1083,106 @@ function NatoMapSymbol({
       />
     </g>
   );
-}
+});
+
+const HostileTrackOverlay = memo(function HostileTrackOverlay({
+  track,
+  view,
+  now
+}: {
+  track: HostileTrack;
+  view: MapView;
+  now: number;
+}) {
+  const visibleSamples = track.samples
+    .filter((sample) => now - sample.at <= HOSTILE_TRACK_HISTORY_MS)
+    .flatMap((sample) => {
+      const screen = mapToScreenPoint(sample, view);
+      return screen ? [{ ...sample, screen }] : [];
+    });
+  const lastSample = track.samples[track.samples.length - 1];
+  const isObserved = now - track.lastSeenAt <= 650;
+
+  if (!lastSample) {
+    return null;
+  }
+
+  if (isObserved) {
+    const points = visibleSamples.map((sample) => `${sample.screen.x},${sample.screen.y}`).join(" ");
+    return (
+      <g className="hostile-track-layer" aria-label={`${track.label} hostile track`}>
+        {visibleSamples.length > 1 && (
+          <polyline className="hostile-track-line" points={points} vectorEffect="non-scaling-stroke" />
+        )}
+        {visibleSamples.map((sample, index) => (
+          <circle
+            key={`${track.id}-sample-${sample.at}-${index}`}
+            cx={sample.screen.x}
+            cy={sample.screen.y}
+            r={index === visibleSamples.length - 1 ? "0.0042" : "0.0028"}
+            className="hostile-track-dot"
+            opacity={clamp(1 - (now - sample.at) / HOSTILE_TRACK_HISTORY_MS, 0.25, 1)}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </g>
+    );
+  }
+
+  const predicted = predictTrackPoint(track, now);
+  const predictedScreen = mapToScreenPoint(predicted, view);
+  const lastScreen = mapToScreenPoint(lastSample, view);
+  if (!predictedScreen) {
+    return null;
+  }
+
+  const lostMs = now - track.lastSeenAt;
+  const retentionRatio = clamp(lostMs / HOSTILE_ROI_RETENTION_MS, 0, 1);
+  const uncertaintyRadius = 0.018 + retentionRatio * 0.045;
+  const opacity = clamp(1 - retentionRatio, 0.18, 0.78);
+
+  return (
+    <g className="hostile-roi-layer" opacity={opacity} aria-label={`${track.label} predicted interest area`}>
+      {lastScreen && (
+        <line
+          x1={lastScreen.x}
+          y1={lastScreen.y}
+          x2={predictedScreen.x}
+          y2={predictedScreen.y}
+          className="hostile-prediction-line"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+      <circle
+        cx={predictedScreen.x}
+        cy={predictedScreen.y}
+        r={uncertaintyRadius}
+        className="hostile-roi-ring"
+        vectorEffect="non-scaling-stroke"
+      />
+      <circle
+        cx={predictedScreen.x}
+        cy={predictedScreen.y}
+        r="0.004"
+        className="hostile-roi-center"
+        vectorEffect="non-scaling-stroke"
+      />
+      <text
+        x={predictedScreen.x}
+        y={predictedScreen.y + uncertaintyRadius + 0.018}
+        className="hostile-roi-label"
+      >
+        ROI {Math.max(0, Math.ceil((HOSTILE_ROI_RETENTION_MS - lostMs) / 1000))}s
+      </text>
+    </g>
+  );
+});
 
 function MapSurface({
   mapInfo,
   objects,
+  hostileTracks,
+  trackNow,
   markers,
   activeMarker,
   sourcePoint,
@@ -890,6 +1194,8 @@ function MapSurface({
 }: {
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
+  hostileTracks: HostileTrack[];
+  trackNow: number;
   markers: MapMarker[];
   activeMarker?: MapMarker;
   sourcePoint?: FirePoint;
@@ -906,6 +1212,13 @@ function MapSurface({
   const [selection, setSelection] = useState<MapSelection | undefined>();
   const sourceScreen = mapToScreenPoint(sourcePoint, view);
   const targetScreen = mapToScreenPoint(targetPoint, view);
+  const visibleObjects = useMemo(
+    () =>
+      objects
+        .map((object, index) => ({ object, index, key: objectVisibilityKey(object, index) }))
+        .filter(({ key }) => !hiddenObjectKeys.has(key)),
+    [objects, hiddenObjectKeys]
+  );
 
   function stagePointToMapPoint(clientX: number, clientY: number) {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -929,12 +1242,10 @@ function MapSurface({
     const hitRadius = 0.026 / view.zoom;
     const hitRadiusSquared = hitRadius * hitRadius;
 
-    return objects
-      .map((object, index) => ({ object, index, key: objectVisibilityKey(object, index) }))
+    return visibleObjects
       .filter(
-        ({ object, key }) =>
+        ({ object }) =>
           hasMapPoint(object) &&
-          !hiddenObjectKeys.has(key) &&
           pointDistanceSquared(object, point) <= hitRadiusSquared
       )
       .sort(
@@ -1088,7 +1399,7 @@ function MapSurface({
         >
           <img className="map-image" src={imageUrl} alt="" draggable={false} />
           <svg className="map-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-            {Array.from({ length: 9 }, (_, index) => index / 8).map((line) => (
+            {GRID_LINES.map((line) => (
               <g key={line}>
                 <line x1={line} y1={0} x2={line} y2={1} className="grid-line" />
                 <line x1={0} y1={line} x2={1} y2={line} className="grid-line" />
@@ -1097,18 +1408,20 @@ function MapSurface({
           </svg>
         </div>
         <svg className="symbol-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-          {objects.map((object, index) =>
-            hiddenObjectKeys.has(objectVisibilityKey(object, index)) ? null : (
-              <NatoMapSymbol
-                key={objectKey(object, index)}
-                object={object}
-                index={index}
-                view={view}
-                isFireSource={isObjectFirePoint(sourcePoint, object, index)}
-                isFireTarget={isObjectFirePoint(targetPoint, object, index)}
-              />
-            )
-          )}
+          {hostileTracks.map((track) => (
+            <HostileTrackOverlay key={track.id} track={track} view={view} now={trackNow} />
+          ))}
+
+          {visibleObjects.map(({ object, index, key }) => (
+            <NatoMapSymbol
+              key={key}
+              object={object}
+              index={index}
+              view={view}
+              isFireSource={isObjectFirePoint(sourcePoint, object, index)}
+              isFireTarget={isObjectFirePoint(targetPoint, object, index)}
+            />
+          ))}
 
           {sourceScreen && targetScreen && (
             <line
@@ -1259,38 +1572,44 @@ function ToolPanel({
   setTargetRef: (ref: FirePointRef) => void;
   clearMarkers: () => void;
 }) {
-  const player = findPlayer(objects);
-  const range = sourcePoint && targetPoint ? distanceBetween(sourcePoint, targetPoint, mapInfo) : undefined;
-  const bearing = sourcePoint && targetPoint ? bearingBetween(sourcePoint, targetPoint) : undefined;
-  const targetObjects = objects.filter((object) => object.icon !== "Player");
-  const visibleObjectCount = objects.filter(
-    (object, index) => !hiddenObjectKeys.has(objectVisibilityKey(object, index))
-  ).length;
-  const distanceOrigin = sourcePoint ?? (player ? resolveFirePoint({ kind: "player" }, objects, markers) : undefined);
-  const filteredObjects = objects
-    .map((object, index) => ({ object, index, key: objectVisibilityKey(object, index) }))
-    .filter(({ object }) => objectMatchesFilters(object, objectFilters))
-    .sort((left, right) => {
-      const leftSquad = isLikelySquadmate(left.object) ? 0 : 1;
-      const rightSquad = isLikelySquadmate(right.object) ? 0 : 1;
-      if (leftSquad !== rightSquad) {
-        return leftSquad - rightSquad;
-      }
-
-      const leftDistance = distanceOrigin
-        ? distanceBetween(distanceOrigin, left.object, mapInfo) ?? Number.POSITIVE_INFINITY
-        : Number.POSITIVE_INFINITY;
-      const rightDistance = distanceOrigin
-        ? distanceBetween(distanceOrigin, right.object, mapInfo) ?? Number.POSITIVE_INFINITY
-        : Number.POSITIVE_INFINITY;
-
-      if (leftDistance !== rightDistance) {
-        return leftDistance - rightDistance;
-      }
-
-      return left.index - right.index;
-    });
-  const hasPointOfInterest = objects.some((object) => isPointOfInterestObject(object) && hasMapPoint(object));
+  const player = useMemo(() => findPlayer(objects), [objects]);
+  const range = useMemo(
+    () => (sourcePoint && targetPoint ? distanceBetween(sourcePoint, targetPoint, mapInfo) : undefined),
+    [sourcePoint, targetPoint, mapInfo]
+  );
+  const bearing = useMemo(
+    () => (sourcePoint && targetPoint ? bearingBetween(sourcePoint, targetPoint) : undefined),
+    [sourcePoint, targetPoint]
+  );
+  const targetObjectCount = useMemo(
+    () => objects.reduce((count, object) => count + (object.icon === "Player" ? 0 : 1), 0),
+    [objects]
+  );
+  const visibleObjectCount = useMemo(
+    () =>
+      objects.reduce(
+        (count, object, index) =>
+          count + (hiddenObjectKeys.has(objectVisibilityKey(object, index)) ? 0 : 1),
+        0
+      ),
+    [objects, hiddenObjectKeys]
+  );
+  const distanceOrigin = useMemo(
+    () => sourcePoint ?? (player ? resolveFirePoint({ kind: "player" }, objects, markers) : undefined),
+    [sourcePoint, player, objects, markers]
+  );
+  const sortedObjects = useMemo(
+    () => sortObjectsByTacticalPriority(objects, mapInfo, distanceOrigin),
+    [objects, mapInfo, distanceOrigin]
+  );
+  const filteredObjects = useMemo(
+    () => sortedObjects.filter(({ object }) => objectMatchesFilters(object, objectFilters)),
+    [sortedObjects, objectFilters]
+  );
+  const hasPointOfInterest = useMemo(
+    () => objects.some((object) => isPointOfInterestObject(object) && hasMapPoint(object)),
+    [objects]
+  );
 
   return (
     <aside className="tool-panel">
@@ -1372,7 +1691,7 @@ function ToolPanel({
             <span>Total</span>
           </div>
           <div>
-            <strong>{targetObjects.length}</strong>
+            <strong>{targetObjectCount}</strong>
             <span>Targets</span>
           </div>
           <div>
@@ -1562,8 +1881,10 @@ export default function App() {
   const [hiddenObjectKeys, setHiddenObjectKeys] = useState<Set<string>>(() => new Set());
   const [sourceRef, setSourceRef] = useState<FirePointRef>({ kind: "player" });
   const [targetRef, setTargetRef] = useState<FirePointRef | undefined>();
+  const [hostileTracks, setHostileTracks] = useState<HostileTrack[]>([]);
+  const [trackNow, setTrackNow] = useState(() => Date.now());
   const activeMarker = markers[markers.length - 1];
-  const objects = mapData.mapObjects ?? [];
+  const objects = mapData.ok ? mapData.mapObjects ?? EMPTY_MAP_OBJECTS : EMPTY_MAP_OBJECTS;
 
   const statusText = mapData.ok ? "8111 Map Online" : "8111 Map Offline";
   const lastUpdate = mapData.updatedAt
@@ -1595,6 +1916,15 @@ export default function App() {
       }
     }
   }, [targetRef, targetPoint]);
+
+  useEffect(() => {
+    if (!mapData.updatedAt) {
+      return;
+    }
+
+    setTrackNow(mapData.updatedAt);
+    setHostileTracks((previous) => updateHostileTracks(previous, objects, mapData.updatedAt));
+  }, [objects, mapData.updatedAt]);
 
   function clearMarkers() {
     setMarkers([]);
@@ -1674,6 +2004,8 @@ export default function App() {
         <MapSurface
           mapInfo={mapData.mapInfo}
           objects={objects}
+          hostileTracks={hostileTracks}
+          trackNow={trackNow}
           markers={markers}
           activeMarker={activeMarker}
           sourcePoint={sourcePoint}
