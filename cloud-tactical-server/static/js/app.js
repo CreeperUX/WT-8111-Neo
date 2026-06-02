@@ -448,6 +448,7 @@ function monitorRoom(roomId) {
   D.loading.style.display = 'flex';
   D.loading.querySelector('span').textContent = 'Connecting to room ' + roomId + '...';
 
+  console.log('[C2] Connecting to ' + url);
   ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
 
@@ -555,6 +556,8 @@ async function fetchRooms() {
           </div>
         </div>`;
       }).join('');
+
+    console.log('[C2] fetchRooms: ' + ST.rooms.length + ' rooms loaded');
 
     // Bind monitor + delete buttons
     D.roomList.querySelectorAll('[data-action="monitor"]').forEach(btn => {
@@ -705,7 +708,9 @@ function bindEvents() {
 
 // ── Init ──
 function init() {
+  console.log('[C2] Starting, server=' + ST.server + ':' + ST.port);
   cacheDom();
+  if (!D.modalRoom) { console.error('[C2] FATAL: modal-room missing'); return; }
   resize();
   renderMap();
   bindEvents();
@@ -715,6 +720,7 @@ function init() {
   // Open room manager on load
   D.modalRoom.classList.remove('hidden');
   fetchRooms();
+  console.log('[C2] Init complete, room modal should be visible');
 }
 
 init();
