@@ -1,6 +1,6 @@
 # WT 8111 Neo Cloud Tactical Server — REST API
 
-> **Version:** 0.1.0  
+> **Version:** 0.1.1
 > **Protocol Version:** 1  
 > **Base URL:** `http://<host>:17712`
 
@@ -34,7 +34,7 @@ Server version and protocol info.
 ```json
 {
   "service": "cloud-tactical-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "protocol_version": 1
 }
 ```
@@ -81,7 +81,9 @@ List all active rooms. Does not expose passwords.
     "has_password": true,
     "created_secs_ago": 42,
     "relay_count": 2,
-    "viewer_count": 1
+    "viewer_count": 1,
+    "map_generation": 128,
+    "has_map_image": true
   }
 ]
 ```
@@ -100,6 +102,8 @@ Get room details.
   "created_secs_ago": 120,
   "relay_count": 2,
   "viewer_count": 3,
+  "map_generation": 128,
+  "has_map_image": true,
   "relay_url": "/ws/rooms/alpha-squad/relay",
   "viewer_url": "/ws/rooms/alpha-squad/viewer"
 }
@@ -134,6 +138,60 @@ Verify room access. Required before connecting to WebSocket.
 
 ---
 
+#### `PUT /api/rooms/{room_id}/map-image`
+
+Upload the room map background image. Relay clients may attempt this after joining; the server stores only the first valid image received for the room and ignores later uploads.
+
+**Headers:**
+```http
+Content-Type: image/png
+X-WT8111-Room-Password: s3cret
+X-WT8111-Client-ID: relay-client-id
+X-WT8111-Map-Generation: 128
+```
+
+**Body:** raw image bytes from War Thunder `map.img`.
+
+**Response 201** when this upload wins:
+```json
+{
+  "ok": true,
+  "accepted": true,
+  "room_id": "alpha-squad",
+  "bytes": 323235,
+  "content_type": "image/jpeg",
+  "map_generation": 128,
+  "uploaded_secs_ago": 0
+}
+```
+
+**Response 200** for later uploads after the room already has a map image:
+```json
+{
+  "ok": true,
+  "accepted": false,
+  "room_id": "alpha-squad",
+  "bytes": 323235,
+  "content_type": "image/jpeg",
+  "map_generation": 128,
+  "uploaded_secs_ago": 12
+}
+```
+
+**Errors:** `400` for empty or non-image uploads, `403` for wrong password, `404` if room not found, `413` if over `max_map_image_bytes`.
+
+---
+
+#### `GET /api/rooms/{room_id}/map-image`
+
+Fetch the stored room map background image.
+
+**Response 200:** raw image bytes with `Content-Type` and `X-WT8111-Map-Generation` headers.
+
+**Errors:** `404` if the room does not exist or no map image has been accepted yet.
+
+---
+
 ## Connection Flow
 
 ### Relay Client (Game Host)
@@ -146,8 +204,9 @@ A **relay** uploads observation data from War Thunder's `localhost:8111`.
 3. WS  /ws/rooms/{id}/relay         (open WebSocket)
 4. Send WsEnvelope{JoinRequest}     (protocol handshake)
 5. Receive WsEnvelope{JoinResponse} (accepted=true)
-6. Stream WsEnvelope{Observation}   (upload at 1-2 Hz)
-7. Send WsEnvelope{Ping}            (keepalive every 30s)
+6. PUT  /api/rooms/{id}/map-image   (all relays may attempt; first image wins)
+7. Stream WsEnvelope{Observation}   (upload at 1-2 Hz)
+8. Send WsEnvelope{Ping}            (keepalive every 30s)
 ```
 
 ### Viewer Client (Web GUI / Tablet)
@@ -197,7 +256,10 @@ All errors follow this format:
 
 ## Versioning
 
+- `version` is the service/package version from `Cargo.toml` and is returned by `GET /version`.
+- `protocol_version` is the WebSocket/Protobuf wire contract version. It remains `1` for v0.1.1 because map images are transferred over REST and do not change `WsEnvelope`, `ObservationFrame`, or `FusedSnapshot` field compatibility.
+- Patch releases may add REST fields or endpoints such as `map-image`; clients should ignore unknown JSON fields.
 - Protocol version negotiation happens during WebSocket handshake.
 - Server advertises `protocol_version` in `/version` and `JoinResponse`.
 - Clients must match the server's protocol version exactly (v1).
-- Breaking protocol changes will increment the version number.
+- Breaking WebSocket/Protobuf changes increment `protocol_version`; service/package releases increment `version`.

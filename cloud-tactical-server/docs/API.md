@@ -1,6 +1,6 @@
 # WT 8111 Neo Cloud Tactical Server — REST API
 
-> **Version:** 0.1.0  
+> **Version:** 0.1.1
 > **Protocol Version:** 1  
 > **Base URL:** `http://<host>:17712`
 
@@ -34,7 +34,7 @@ Server version and protocol info.
 ```json
 {
   "service": "cloud-tactical-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "protocol_version": 1
 }
 ```
@@ -256,7 +256,10 @@ All errors follow this format:
 
 ## Versioning
 
+- `version` is the service/package version from `Cargo.toml` and is returned by `GET /version`.
+- `protocol_version` is the WebSocket/Protobuf wire contract version. It remains `1` for v0.1.1 because map images are transferred over REST and do not change `WsEnvelope`, `ObservationFrame`, or `FusedSnapshot` field compatibility.
+- Patch releases may add REST fields or endpoints such as `map-image`; clients should ignore unknown JSON fields.
 - Protocol version negotiation happens during WebSocket handshake.
 - Server advertises `protocol_version` in `/version` and `JoinResponse`.
 - Clients must match the server's protocol version exactly (v1).
-- Breaking protocol changes will increment the version number.
+- Breaking WebSocket/Protobuf changes increment `protocol_version`; service/package releases increment `version`.

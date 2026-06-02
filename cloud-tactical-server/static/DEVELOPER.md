@@ -1,6 +1,6 @@
 # WT 8111 Neo Cloud Tactical Server — Developer Documentation
 
-> **Version:** 0.1.0  
+> **Version:** 0.1.1
 > **Protocol Version:** 1  
 > **Language:** Rust 1.96 (edition 2021)  
 > **Transport:** HTTP/1.1 REST + WebSocket binary (Protobuf)  
@@ -21,6 +21,7 @@
 9. [Deployment](#9-deployment)
 10. [Source Code Map](#10-source-code-map)
 11. [Security Model](#11-security-model)
+12. [Documentation and Version Management](#12-documentation-and-version-management)
 
 ---
 
@@ -118,6 +119,7 @@ track_history_secs: 3.0       # track position history buffer
 roi_ttl_secs: 15.0            # how long to predict after target disappears
 max_rooms: 100                # server-wide room limit
 max_clients_per_room: 32      # relay + viewer combined
+max_map_image_bytes: 8388608  # per-room first map image upload limit
 ```
 
 ---
@@ -135,7 +137,7 @@ max_clients_per_room: 32      # relay + viewer combined
 
 #### `GET /version`
 ```json
-{ "service": "cloud-tactical-server", "version": "0.1.0", "protocol_version": 1 }
+{ "service": "cloud-tactical-server", "version": "0.1.1", "protocol_version": 1 }
 ```
 
 #### `GET /api/config`
@@ -870,6 +872,35 @@ The server validates incoming `observed_at_ms`:
 - Must not be > 30s in the future (prevents clock skew attacks)
 - Must not be > 60s in the past (prevents replay of stale data)
 - Out-of-range values are clamped to current server time
+
+---
+
+## 12. Documentation and Version Management
+
+### Current Release
+
+| Item | Value |
+|---|---|
+| Service version | `0.1.1` |
+| WebSocket/Protobuf protocol version | `1` |
+| Release branch | `codex/cloud-tactical-server` |
+
+v0.1.1 adds REST map image support for cloud room backgrounds:
+- `PUT /api/rooms/{room_id}/map-image`
+- `GET /api/rooms/{room_id}/map-image`
+- `map_generation` and `has_map_image` in room list/detail JSON
+- C2 Console map background rendering from the accepted room image
+
+This is a service/API patch release. The WebSocket/Protobuf wire protocol remains `1` because the map image is transferred over REST and no existing protobuf field numbers or message shapes changed.
+
+### Version Rules
+
+- Update `cloud-tactical-server/Cargo.toml` for every service release; `GET /version` reports this package version through `env!("CARGO_PKG_VERSION")`.
+- Keep `Cargo.lock` in sync with the package version before committing.
+- Increment `protocol_version` only for breaking or incompatible WebSocket/Protobuf changes.
+- REST-only additions may use patch releases as long as clients can ignore unknown JSON fields.
+- Keep `docs/API.md` as the source REST contract and sync `static/API.md` when the served documentation must match.
+- Keep `docs/DEVELOPER.md` and `static/DEVELOPER.md` aligned when operational or integration guidance changes.
 
 ---
 
