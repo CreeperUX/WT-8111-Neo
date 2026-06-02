@@ -212,7 +212,8 @@ async fn ws_viewer(
     let room = rooms.get_room(&room_id).ok_or(RoomError::RoomNotFound)?;
 
     // Viewer password check via query parameter
-    if !room.check_password(&query.password.unwrap_or_default()) {
+    let password = query.password.unwrap_or_default();
+    if !room.check_password(&password) {
         return Err(RoomError::InvalidPassword.into());
     }
 

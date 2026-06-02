@@ -28,6 +28,7 @@ const ST = {
   port: window.location.port || '17712',
   connected: false,
   roomId: null,
+  roomPassword: '',
   tracks: new Map(),
   rois: new Map(),
   summary: { total:0, hostile:0, friendly:0, stale:0 },
@@ -438,7 +439,11 @@ function monitorRoom(roomId) {
 
   ST.roomId = roomId;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${ST.server}:${ST.port}/ws/rooms/${roomId}/viewer`;
+  let url = `${proto}//${ST.server}:${ST.port}/ws/rooms/${roomId}/viewer`;
+  // Send password as query param if known
+  if (ST.roomPassword) {
+    url += '?password=' + encodeURIComponent(ST.roomPassword);
+  }
 
   D.loading.style.display = 'flex';
   D.loading.querySelector('span').textContent = 'Connecting to room ' + roomId + '...';
@@ -457,14 +462,23 @@ function monitorRoom(roomId) {
 
   ws.onmessage = e => parseSnapshot(new Uint8Array(e.data));
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     ST.connected = false;
+    // If closed with 4003-4999 (auth failure), stop retrying and prompt for password
+    if (ev.code >= 4000 && ev.code < 5000) {
+      D.statusConn.innerHTML = '<span>●</span> Auth Failed';
+      D.statusConn.className = 'status-pill disconnected';
+      D.loading.querySelector('span').textContent = 'Password required — create or select a room';
+      return;
+    }
     D.statusConn.innerHTML = '<span>●</span> Disconnected';
     D.statusConn.className = 'status-pill disconnected';
     D.loading.style.display = 'flex';
     D.loading.querySelector('span').textContent = 'Reconnecting to ' + roomId + '...';
     reconnect = setTimeout(() => monitorRoom(roomId), 5000);
   };
+
+  ws.onerror = () => {};
 }
 
 // ── Room Management (Server Admin) ──
@@ -508,7 +522,7 @@ async function fetchRooms() {
             <div class="room-meta">↻${rr.relay_count} relays · 👁${rr.viewer_count} viewers · ${rr.created_secs_ago}s ago</div>
           </div>
           <div class="room-actions">
-            <button class="room-action-btn monitor" data-action="monitor" data-rid="${rr.room_id}">
+            <button class="room-action-btn monitor" data-action="monitor" data-rid="${rr.room_id}" data-haspw="${rr.has_password}">
               ${isActive ? 'Active' : 'Monitor'}
             </button>
           </div>
@@ -519,9 +533,16 @@ async function fetchRooms() {
     D.roomList.querySelectorAll('[data-action="monitor"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const rid = btn.dataset.rid;
+        const hasPw = btn.dataset.haspw === 'true';
+
         if (rid !== ST.roomId) {
+          // If room has password and we don't have one stored, prompt
+          if (hasPw && !ST.roomPassword) {
+            const pw = prompt('Enter password for room "' + rid + '":');
+            if (pw === null) return; // cancelled
+            ST.roomPassword = pw;
+          }
           monitorRoom(rid);
-          // Refresh to update active state
           setTimeout(fetchRooms, 300);
         }
       });
@@ -544,6 +565,9 @@ async function createRoom() {
     });
     const data = await r.json();
     if (data.room_id) {
+      // Store password for viewer auth
+      ST.roomPassword = pw || '';
+
       // Show connection info
       const base = serverBaseUrl();
       const resultDiv = D.createResult;
