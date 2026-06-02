@@ -46,8 +46,8 @@ pub struct Track {
     pub source_count: u32,
     pub flags: u32,
     pub last_observed_at: Instant,
-    pub last_observed_at_ms: u64,   // 服务端 UNIX 毫秒 (用于多端融合)
-    pub total_age_ms: u32,          // 最近一次更新的总数据年龄
+    pub last_observed_at_ms: u64, // 服务端 UNIX 毫秒 (用于多端融合)
+    pub total_age_ms: u32,        // 最近一次更新的总数据年龄
     pub history: VecDeque<TrackPoint>,
     pub created_at: Instant,
     pub contributing_clients: Vec<ClientContribution>,
@@ -64,8 +64,8 @@ pub struct ParsedObservation {
     pub client_id: String,
     pub player_name: Option<String>,
     pub seq: u64,
-    pub observed_at_ms: u64,        // 客户端 NTP 同步后的采样时刻 (服务端时间线)
-    pub measurement_age_ms: u32,    // 客户端自报: 8111 采样→打包的间隔
+    pub observed_at_ms: u64,     // 客户端 NTP 同步后的采样时刻 (服务端时间线)
+    pub measurement_age_ms: u32, // 客户端自报: 8111 采样→打包的间隔
     pub map_generation: u32,
     pub player_x: u32,
     pub player_y: u32,
@@ -104,6 +104,7 @@ pub struct PredictedRoi {
 /// 一次 tick 的融合结果
 #[derive(Debug, Clone)]
 pub struct FusionResult {
+    pub map_generation: u32,
     pub tracks: Vec<Track>,
     pub rois: Vec<PredictedRoi>,
     pub total_count: u32,
@@ -117,6 +118,7 @@ pub struct FusionResult {
 pub struct FusionEngine {
     tracks: HashMap<String, Track>,
     track_counter: u64,
+    map_generation: u32,
     config: ServerConfig,
     pending_observations: Vec<ParsedObservation>,
 }
@@ -126,6 +128,7 @@ impl FusionEngine {
         Self {
             tracks: HashMap::new(),
             track_counter: 0,
+            map_generation: 0,
             config: config.clone(),
             pending_observations: Vec::new(),
         }
@@ -142,6 +145,10 @@ impl FusionEngine {
         let observations = std::mem::take(&mut self.pending_observations);
 
         for obs in &observations {
+            if obs.map_generation != 0 {
+                self.map_generation = obs.map_generation;
+            }
+
             for obj in &obs.objects {
                 // ── 时间戳校验: 限制 observed_at_ms 在合理范围 ──
                 // 防止客户端用未来时间戳获得过高融合权重
@@ -160,22 +167,9 @@ impl FusionEngine {
                 };
 
                 if let Some(track_id) = self.match_track(&fingerprint) {
-                    self.update_track(
-                        &track_id,
-                        obj,
-                        &obs.client_id,
-                        now,
-                        now_ms,
-                        total_age_ms,
-                    );
+                    self.update_track(&track_id, obj, &obs.client_id, now, now_ms, total_age_ms);
                 } else {
-                    let _ = self.create_track(
-                        obj,
-                        &obs.client_id,
-                        now,
-                        now_ms,
-                        total_age_ms,
-                    );
+                    let _ = self.create_track(obj, &obs.client_id, now, now_ms, total_age_ms);
                 }
             }
         }
@@ -183,9 +177,7 @@ impl FusionEngine {
         // 清理 source_count 过期记录
         let cutoff = now - Duration::from_secs_f64(SOURCE_WINDOW_SECS);
         for track in self.tracks.values_mut() {
-            track
-                .contributing_clients
-                .retain(|c| c.last_seen >= cutoff);
+            track.contributing_clients.retain(|c| c.last_seen >= cutoff);
         }
 
         // 生成 ROI（基于 last_observed_at_ms）
@@ -202,6 +194,7 @@ impl FusionEngine {
         let friendly_count = all_tracks.iter().filter(|t| t.affiliation == 0).count() as u32;
 
         FusionResult {
+            map_generation: self.map_generation,
             total_count: all_tracks.len() as u32,
             hostile_count,
             friendly_count,
@@ -220,8 +213,12 @@ impl FusionEngine {
                 && track.class_id == fingerprint.class_id
                 && track.label_id == fingerprint.label_id
             {
-                if spatial_dist(track.x_u16, track.y_u16, fingerprint.x_u16, fingerprint.y_u16)
-                    < 2000
+                if spatial_dist(
+                    track.x_u16,
+                    track.y_u16,
+                    fingerprint.x_u16,
+                    fingerprint.y_u16,
+                ) < 2000
                 {
                     return Some(id.clone());
                 }
@@ -236,8 +233,12 @@ impl FusionEngine {
             if track.affiliation == fingerprint.affiliation
                 && track.class_id == fingerprint.class_id
             {
-                let dist =
-                    spatial_dist(track.x_u16, track.y_u16, fingerprint.x_u16, fingerprint.y_u16);
+                let dist = spatial_dist(
+                    track.x_u16,
+                    track.y_u16,
+                    fingerprint.x_u16,
+                    fingerprint.y_u16,
+                );
                 if dist < 800 && dist < best_dist {
                     best_dist = dist;
                     best_id = Some(id.clone());
@@ -391,7 +392,11 @@ impl FusionEngine {
         });
 
         let history_cutoff = now - Duration::from_secs_f64(self.config.track_history_secs);
-        while track.history.front().map_or(false, |p| p.at < history_cutoff) {
+        while track
+            .history
+            .front()
+            .map_or(false, |p| p.at < history_cutoff)
+        {
             track.history.pop_front();
         }
     }
@@ -421,17 +426,15 @@ impl FusionEngine {
             let elapsed = ms_since as f64 / 1000.0;
 
             // ── 椭圆中心 = 锚点 + 速度 × 时间 ──
-            let center_x = (track.anchor_x_u16 as f64
-                + track.anchor_vx_i16 as f64 * elapsed)
+            let center_x = (track.anchor_x_u16 as f64 + track.anchor_vx_i16 as f64 * elapsed)
                 .clamp(0.0, 65535.0) as u32;
-            let center_y = (track.anchor_y_u16 as f64
-                + track.anchor_vy_i16 as f64 * elapsed)
+            let center_y = (track.anchor_y_u16 as f64 + track.anchor_vy_i16 as f64 * elapsed)
                 .clamp(0.0, 65535.0) as u32;
 
             // ── 主轴方向 ──
             let speed = ((track.anchor_vx_i16 as f64).powi(2)
                 + (track.anchor_vy_i16 as f64).powi(2))
-                .sqrt();
+            .sqrt();
             let heading = if speed > 1.0 {
                 // atan2(dx, -dy) → 0=北, 顺时针
                 (track.anchor_vx_i16 as f64)
@@ -452,8 +455,7 @@ impl FusionEngine {
             let radius_minor = (base_radius + (elapsed.sqrt() * 150.0) as u32).min(2000);
 
             // ── 置信度随时间衰减 ──
-            let confidence =
-                ((255.0 * (1.0 - elapsed / roi_ttl)) as u32).max(20);
+            let confidence = ((255.0 * (1.0 - elapsed / roi_ttl)) as u32).max(20);
 
             // ── 剩余时间 ──
             let expires_in = ((roi_ttl - elapsed) * 1000.0) as u32;
@@ -496,7 +498,9 @@ fn spatial_dist(x1: u32, y1: u32, x2: u32, y2: u32) -> u32 {
 
 /// 计算 EMA 权重 α = exp(-total_age_ms / τ)
 fn compute_alpha(total_age_ms: u32) -> f64 {
-    (-(total_age_ms as f64) / FUSION_TAU_MS).exp().clamp(0.0, 1.0)
+    (-(total_age_ms as f64) / FUSION_TAU_MS)
+        .exp()
+        .clamp(0.0, 1.0)
 }
 
 /// 时间戳校验: 限制 observed_at_ms 在合理范围
@@ -504,8 +508,8 @@ fn compute_alpha(total_age_ms: u32) -> f64 {
 /// - 不允许超过 60s 的过旧时间 (防止重放旧数据)
 /// - 超限则 clamp 到边界值
 fn clamp_timestamp(observed_at_ms: u64, server_now_ms: u64) -> u64 {
-    const MAX_FUTURE_MS: u64 = 30_000;  // 30s
-    const MAX_PAST_MS: u64 = 60_000;    // 60s
+    const MAX_FUTURE_MS: u64 = 30_000; // 30s
+    const MAX_PAST_MS: u64 = 60_000; // 60s
 
     let earliest = server_now_ms.saturating_sub(MAX_PAST_MS);
     let latest = server_now_ms.saturating_add(MAX_FUTURE_MS);
@@ -513,13 +517,15 @@ fn clamp_timestamp(observed_at_ms: u64, server_now_ms: u64) -> u64 {
     if observed_at_ms > latest {
         tracing::warn!(
             "Clamping future timestamp: observed_at_ms={} > server_now+30s={}",
-            observed_at_ms, latest
+            observed_at_ms,
+            latest
         );
         latest
     } else if observed_at_ms < earliest {
         tracing::warn!(
             "Clamping stale timestamp: observed_at_ms={} < server_now-60s={}",
-            observed_at_ms, earliest
+            observed_at_ms,
+            earliest
         );
         earliest
     } else {

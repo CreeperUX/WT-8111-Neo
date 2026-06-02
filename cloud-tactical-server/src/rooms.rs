@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -16,12 +17,22 @@ pub struct RoomInfo {
     pub map_generation: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct MapImage {
+    pub bytes: Bytes,
+    pub content_type: String,
+    pub uploaded_at: std::time::Instant,
+    pub uploaded_by: String,
+    pub map_generation: u32,
+}
+
 struct RoomState {
     info: RoomInfo,
     observation_tx: mpsc::UnboundedSender<ParsedObservation>,
     snapshot_tx: broadcast::Sender<FusionResult>,
     relay_counter: Arc<AtomicUsize>,
     viewer_counter: Arc<AtomicUsize>,
+    map_image: Option<MapImage>,
 }
 
 #[derive(Clone)]
@@ -162,6 +173,7 @@ impl RoomManager {
                 snapshot_tx: snap_tx,
                 relay_counter,
                 viewer_counter,
+                map_image: None,
             },
         );
 
@@ -191,17 +203,47 @@ impl RoomManager {
     pub fn list_rooms(&self) -> Vec<RoomInfo> {
         self.rooms
             .values()
-            .map(|s| {
-                RoomInfo {
-                    room_id: s.info.room_id.clone(),
-                    password_hash: s.info.password_hash.clone(),
-                    created_at: s.info.created_at,
-                    relay_count: s.relay_counter.load(Ordering::SeqCst),
-                    viewer_count: s.viewer_counter.load(Ordering::SeqCst),
-                    map_generation: s.info.map_generation,
-                }
+            .map(|s| RoomInfo {
+                room_id: s.info.room_id.clone(),
+                password_hash: s.info.password_hash.clone(),
+                created_at: s.info.created_at,
+                relay_count: s.relay_counter.load(Ordering::SeqCst),
+                viewer_count: s.viewer_counter.load(Ordering::SeqCst),
+                map_generation: s.info.map_generation,
             })
             .collect()
+    }
+
+    pub fn has_map_image(&self, room_id: &str) -> bool {
+        self.rooms
+            .get(room_id)
+            .and_then(|state| state.map_image.as_ref())
+            .is_some()
+    }
+
+    pub fn get_map_image(&self, room_id: &str) -> Result<MapImage, RoomError> {
+        self.rooms
+            .get(room_id)
+            .ok_or(RoomError::RoomNotFound)?
+            .map_image
+            .clone()
+            .ok_or(RoomError::MapImageMissing)
+    }
+
+    pub fn store_first_map_image(
+        &mut self,
+        room_id: &str,
+        image: MapImage,
+    ) -> Result<(bool, MapImage), RoomError> {
+        let state = self.rooms.get_mut(room_id).ok_or(RoomError::RoomNotFound)?;
+
+        if let Some(existing) = state.map_image.clone() {
+            return Ok((false, existing));
+        }
+
+        state.info.map_generation = image.map_generation;
+        state.map_image = Some(image.clone());
+        Ok((true, image))
     }
 
     pub fn remove_room(&mut self, room_id: &str) -> bool {
@@ -222,6 +264,7 @@ pub enum RoomError {
     RoomExists,
     TooManyRooms,
     RoomNotFound,
+    MapImageMissing,
     InvalidPassword,
     RoomFull,
 }
@@ -232,6 +275,7 @@ impl std::fmt::Display for RoomError {
             RoomError::RoomExists => write!(f, "Room already exists"),
             RoomError::TooManyRooms => write!(f, "Server room limit reached"),
             RoomError::RoomNotFound => write!(f, "Room not found"),
+            RoomError::MapImageMissing => write!(f, "Map image not found"),
             RoomError::InvalidPassword => write!(f, "Invalid password"),
             RoomError::RoomFull => write!(f, "Room is full"),
         }
@@ -247,9 +291,7 @@ async fn run_fusion_loop(
     snap_tx: broadcast::Sender<FusionResult>,
     interval_ms: u64,
 ) {
-    let mut tick_interval = tokio::time::interval(
-        std::time::Duration::from_millis(interval_ms),
-    );
+    let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
 
     loop {
         tokio::select! {

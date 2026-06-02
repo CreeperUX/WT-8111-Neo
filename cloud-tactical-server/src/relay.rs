@@ -1,11 +1,9 @@
 use axum::extract::ws::{Message, WebSocket};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use prost::Message as ProstMessage;
 
 use crate::fusion::ParsedObservation;
-use crate::mod_pb::{
-    ws_envelope, ErrorResponse, JoinResponse, ObservationFrame, WsEnvelope,
-};
+use crate::mod_pb::{ws_envelope, ErrorResponse, JoinResponse, ObservationFrame, WsEnvelope};
 use crate::rooms::RoomHandle;
 
 /// 处理 relay WebSocket 连接
@@ -16,7 +14,10 @@ pub async fn handle_relay(
     max_per_room: usize,
 ) {
     let session_id = uuid::Uuid::new_v4().to_string();
-    tracing::info!("Relay {client_id} connecting to room {} (session {session_id})", room.info.room_id);
+    tracing::info!(
+        "Relay {client_id} connecting to room {} (session {session_id})",
+        room.info.room_id
+    );
 
     // 检查房间容量
     if !room.try_acquire_relay(max_per_room) {
@@ -29,15 +30,19 @@ pub async fn handle_relay(
     let server_now = unix_ms();
     let joined = match wait_for_join(&mut ws, &room).await {
         Ok(true) => {
-            send_envelope(&mut ws, WsEnvelope {
-                payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
-                    accepted: true,
-                    session_id: session_id.clone(),
-                    server_protocol_version: 1,
-                    error_message: String::new(),
-                    server_time_ms: server_now,
-                })),
-            }).await;
+            send_envelope(
+                &mut ws,
+                WsEnvelope {
+                    payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
+                        accepted: true,
+                        session_id: session_id.clone(),
+                        server_protocol_version: 1,
+                        error_message: String::new(),
+                        server_time_ms: server_now,
+                    })),
+                },
+            )
+            .await;
             true
         }
         Ok(false) => {
@@ -48,15 +53,19 @@ pub async fn handle_relay(
             } else {
                 "Invalid protocol version".to_string()
             };
-            send_envelope(&mut ws, WsEnvelope {
-                payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
-                    accepted: false,
-                    session_id: String::new(),
-                    server_protocol_version: 1,
-                    error_message: reason,
-                    server_time_ms: server_now,
-                })),
-            }).await;
+            send_envelope(
+                &mut ws,
+                WsEnvelope {
+                    payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
+                        accepted: false,
+                        session_id: String::new(),
+                        server_protocol_version: 1,
+                        error_message: reason,
+                        server_time_ms: server_now,
+                    })),
+                },
+            )
+            .await;
             let _ = ws.send(Message::Close(None)).await;
             room.release_relay();
             false
@@ -75,33 +84,31 @@ pub async fn handle_relay(
     // 主消息循环
     while let Some(msg) = ws.next().await {
         match msg {
-            Ok(Message::Binary(data)) => {
-                match WsEnvelope::decode(data.as_ref()) {
-                    Ok(envelope) => {
-                        match envelope.payload {
-                            Some(ws_envelope::Payload::Observation(frame)) => {
-                                let parsed = parse_observation(frame, &client_id);
-                                let _ = room.observation_tx.send(parsed);
-                            }
-                            Some(ws_envelope::Payload::Ping(ping)) => {
-                                send_envelope(&mut ws, WsEnvelope {
-                                    payload: Some(ws_envelope::Payload::Pong(
-                                        crate::mod_pb::Pong {
-                                            client_time_ms: ping.client_time_ms,
-                                            server_time_ms: unix_ms(),
-                                        },
-                                    )),
-                                }).await;
-                            }
-                            _ => {}
-                        }
+            Ok(Message::Binary(data)) => match WsEnvelope::decode(data.as_ref()) {
+                Ok(envelope) => match envelope.payload {
+                    Some(ws_envelope::Payload::Observation(frame)) => {
+                        let parsed = parse_observation(frame, &client_id);
+                        let _ = room.observation_tx.send(parsed);
                     }
-                    Err(e) => {
-                        tracing::warn!("Relay {client_id}: decode error: {e}");
-                        send_error(&mut ws, 400, "Invalid protobuf").await;
+                    Some(ws_envelope::Payload::Ping(ping)) => {
+                        send_envelope(
+                            &mut ws,
+                            WsEnvelope {
+                                payload: Some(ws_envelope::Payload::Pong(crate::mod_pb::Pong {
+                                    client_time_ms: ping.client_time_ms,
+                                    server_time_ms: unix_ms(),
+                                })),
+                            },
+                        )
+                        .await;
                     }
+                    _ => {}
+                },
+                Err(e) => {
+                    tracing::warn!("Relay {client_id}: decode error: {e}");
+                    send_error(&mut ws, 400, "Invalid protobuf").await;
                 }
-            }
+            },
             Ok(Message::Close(_)) => break,
             Err(e) => {
                 tracing::warn!("Relay {client_id}: WS error: {e}");
@@ -112,7 +119,10 @@ pub async fn handle_relay(
     }
 
     room.release_relay();
-    tracing::info!("Relay {client_id} disconnected from room {}", room.info.room_id);
+    tracing::info!(
+        "Relay {client_id} disconnected from room {}",
+        room.info.room_id
+    );
 }
 
 async fn wait_for_join(ws: &mut WebSocket, room: &RoomHandle) -> Result<bool, ()> {

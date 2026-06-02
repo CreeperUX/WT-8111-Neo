@@ -16,7 +16,10 @@ pub async fn handle_viewer(
     client_id: String,
     max_per_room: usize,
 ) {
-    tracing::info!("Viewer {client_id} connecting to room {}", room.info.room_id);
+    tracing::info!(
+        "Viewer {client_id} connecting to room {}",
+        room.info.room_id
+    );
 
     // 检查房间容量
     if !room.try_acquire_viewer(max_per_room) {
@@ -66,7 +69,10 @@ pub async fn handle_viewer(
     }
 
     room.release_viewer();
-    tracing::info!("Viewer {client_id} disconnected from room {}", room.info.room_id);
+    tracing::info!(
+        "Viewer {client_id} disconnected from room {}",
+        room.info.room_id
+    );
 }
 
 fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
@@ -76,8 +82,7 @@ fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
         .tracks
         .iter()
         .map(|t| {
-            let last_seen_ms_ago =
-                now_ms.saturating_sub(t.last_observed_at_ms) as u32;
+            let last_seen_ms_ago = now_ms.saturating_sub(t.last_observed_at_ms) as u32;
 
             FusedTrack {
                 track_id: t.track_id.clone(),
@@ -121,7 +126,7 @@ fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
         room_id: room_id.to_string(),
         seq: 0,
         server_time_ms: now_ms,
-        map_generation: 0,
+        map_generation: result.map_generation,
         tracks,
         interest_regions: rois,
         summary: Some(TacticalSummary {

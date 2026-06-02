@@ -23,6 +23,7 @@ const ST = {
   server: window.location.hostname||'localhost',
   port: window.location.port||'17712',
   connected: false, roomId: null,
+  hasMapImage: false, mapImageUrl: null, mapGeneration: 0,
   tracks: new Map(), rois: new Map(),
   summary: {total:0,hostile:0,friendly:0,stale:0},
   selId: null,
@@ -105,7 +106,8 @@ function drawROI(r){
   ctx.beginPath();ctx.arc(sx(r.anchor_x_u16||0),sy(r.anchor_y_u16||0),2.5,0,Math.PI*2);ctx.fillStyle='rgba(136,88,168,'+alpha+')';ctx.fill();
 }
 function drawGrid(){ctx.strokeStyle='rgba(238,243,239,0.10)';ctx.lineWidth=.5;const s=W/10;for(let i=1;i<10;i++){ctx.beginPath();ctx.moveTo(i*s,0);ctx.lineTo(i*s,H);ctx.stroke();ctx.beginPath();ctx.moveTo(0,i*s);ctx.lineTo(W,i*s);ctx.stroke();}}
-function renderMap(){ctx.clearRect(0,0,W,H);ctx.fillStyle='#0b0e0f';ctx.fillRect(0,0,W,H);drawGrid();for(const r of ST.rois.values())drawROI(r);for(const t of ST.tracks.values())drawTrack(t);}
+function setMapImage(url){const area=$('#map-area');if(url){area.style.backgroundImage='url("'+url+'")';area.classList.add('has-map-image');}else{area.style.backgroundImage='';area.classList.remove('has-map-image');}}
+function renderMap(){ctx.clearRect(0,0,W,H);if(!ST.hasMapImage){ctx.fillStyle='#0b0e0f';ctx.fillRect(0,0,W,H);}drawGrid();for(const r of ST.rois.values())drawROI(r);for(const t of ST.tracks.values())drawTrack(t);}
 
 cvs.addEventListener('click',e=>{
   const r=cvs.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
@@ -160,15 +162,17 @@ function parseROI(data){
 function parseSummary(data){const s={total:0,hostile:0,friendly:0,stale:0};let p=0;while(p<data.length){const tag=data[p];if(!tag)break;p++;if((tag&7)===0){const vr=readVarint(data,p);p=vr.p;switch(tag>>3){case 1:s.total=vr.v;break;case 2:s.hostile=vr.v;break;case 3:s.friendly=vr.v;break;case 4:s.stale=vr.v;break;}}}return s;}
 
 function parseSnapshot(data){
-  const tracks=new Map(),rois=new Map();let summary=ST.summary,p=0;
+  const tracks=new Map(),rois=new Map();let summary=ST.summary,mapGeneration=ST.mapGeneration,p=0;
   while(p<data.length){const tag=data[p];if(!tag)break;p++;const fn=tag>>3,wt=tag&7;
     if(wt===2){const vr=readVarint(data,p);const len=vr.v;p=vr.p;const sub=data.slice(p,p+len);p+=len;
       if(fn===2){let sp=0;while(sp<sub.length){const t2=sub[sp];if(!t2)break;sp++;const fn2=t2>>3,wt2=t2&7;
-        if(wt2===2){const vr2=readVarint(sub,sp);const len2=vr2.v;sp=vr2.p;const s2=sub.slice(sp,sp+len2);sp+=len2;
+        if(wt2===0){const vr2=readVarint(sub,sp);sp=vr2.p;if(fn2===5)mapGeneration=vr2.v;}
+        else if(wt2===2){const vr2=readVarint(sub,sp);const len2=vr2.v;sp=vr2.p;const s2=sub.slice(sp,sp+len2);sp+=len2;
           if(fn2===6){const tr=parseFusedTrack(s2);if(tr)tracks.set(tr.track_id,tr);}
           else if(fn2===7){const ro=parseROI(s2);if(ro)rois.set(ro.track_id,ro);}
-          else if(fn2===8){summary=parseSummary(s2);}}}}}}}
-  ST.tracks=tracks;ST.rois=rois;ST.summary=summary;ST.frameCount++;
+          else if(fn2===8){summary=parseSummary(s2);}}
+        else{break;}}}}}}
+  ST.tracks=tracks;ST.rois=rois;ST.summary=summary;if(mapGeneration!==ST.mapGeneration){ST.mapGeneration=mapGeneration;if(ST.hasMapImage&&ST.roomId){ST.mapImageUrl='/api/rooms/'+encodeURIComponent(ST.roomId)+'/map-image?gen='+ST.mapGeneration;setMapImage(ST.mapImageUrl);}}ST.frameCount++;
   const now=performance.now();if(now-ST.lastFps>1000){ST.fps=Math.round(ST.frameCount/((now-ST.lastFps)/1000));ST.frameCount=0;ST.lastFps=now;}
   updateUI();
 }
@@ -187,10 +191,11 @@ let ws=null,reconnect=null;
 function monitorRoom(roomId){
   if(ws&&ws.readyState===WebSocket.OPEN){ws.close();ws=null;}
   if(reconnect){clearTimeout(reconnect);reconnect=null;}
-  ST.roomId=roomId;
+  ST.roomId=roomId;ST.hasMapImage=false;ST.mapImageUrl=null;ST.mapGeneration=0;setMapImage(null);
   const proto=location.protocol==='https:'?'wss:':'ws:';
   const url=proto+'//'+ST.server+':'+ST.port+'/ws/rooms/'+roomId+'/viewer';
   D.loading.style.display='flex';D.loading.querySelector('span').textContent='Connecting to '+roomId+'...';
+  loadRoomState(roomId);
 
   ws=new WebSocket(url);ws.binaryType='arraybuffer';
   ws.onopen=()=>{
@@ -213,6 +218,18 @@ function updateServerInfo(){
   const b=serverBase();D.serverAddr.textContent=b;
   D.serverRelay.textContent='ws://'+b+'/ws/rooms/{room_id}/relay';
   D.serverViewer.textContent='ws://'+b+'/ws/rooms/{room_id}/viewer';
+}
+function applyRoomMapState(room){
+  if(!room||room.room_id!==ST.roomId)return;
+  ST.hasMapImage=!!room.has_map_image;
+  ST.mapGeneration=Number(room.map_generation||0);
+  ST.mapImageUrl=ST.hasMapImage?'/api/rooms/'+encodeURIComponent(ST.roomId)+'/map-image?gen='+ST.mapGeneration:null;
+  setMapImage(ST.mapImageUrl);
+  D.roomStats.textContent='relays '+(room.relay_count||0)+' / viewers '+(room.viewer_count||0)+(ST.hasMapImage?' / map gen '+ST.mapGeneration:' / no map image');
+}
+async function loadRoomState(roomId){
+  try{const r=await fetch('/api/rooms/'+encodeURIComponent(roomId));if(r.ok)applyRoomMapState(await r.json());}
+  catch(e){}
 }
 
 async function createRoom(){
@@ -240,7 +257,7 @@ async function deleteRoom(roomId,el){
   try{
     const r=await fetch('/api/rooms/'+roomId,{method:'DELETE'});
     if(r.ok){
-      if(ST.roomId===roomId){if(ws){ws.close();ws=null;}ST.roomId=null;ST.connected=false;D.statusConn.innerHTML='<span>●</span> No Room';D.statusConn.className='status-pill disconnected';D.roomName.textContent='—';D.roomStats.textContent='';D.loading.style.display='flex';D.loading.querySelector('span').textContent='Select a room to monitor';}
+      if(ST.roomId===roomId){if(ws){ws.close();ws=null;}ST.roomId=null;ST.connected=false;ST.hasMapImage=false;ST.mapImageUrl=null;ST.mapGeneration=0;setMapImage(null);D.statusConn.innerHTML='<span>●</span> No Room';D.statusConn.className='status-pill disconnected';D.roomName.textContent='—';D.roomStats.textContent='';D.loading.style.display='flex';D.loading.querySelector('span').textContent='Select a room to monitor';}
       await updateRoomList();
     }
   }catch(e){}
@@ -249,9 +266,11 @@ async function deleteRoom(roomId,el){
 async function updateRoomList(){
   try{
     const r=await fetch('/api/rooms');const rooms=await r.json();D.roomListCount.textContent=rooms.length;
+    const current=rooms.find(rr=>rr.room_id===ST.roomId);if(current)applyRoomMapState(current);
     D.roomList.innerHTML=rooms.length===0?'<span style=color:var(--muted);font-size:0.72rem>No active rooms</span>':rooms.map(rr=>{
       const isActive=rr.room_id===ST.roomId,cls=isActive?'room-item-panel active':'room-item-panel';
-      return '<div class="'+cls+'"><div><div class=room-item-name>'+(rr.has_password?'🔒':'◫')+' '+rr.room_id+'</div><div class=room-item-meta>↻'+rr.relay_count+' · 👁'+rr.viewer_count+' · '+rr.created_secs_ago+'s</div></div><button class="room-action-btn monitor" data-monitor="'+rr.room_id+'">'+(isActive?'Active':'Monitor')+'</button><button class="room-action-btn delete" data-delete="'+rr.room_id+'">✕</button></div>';
+      const mapMeta=rr.has_map_image?' · map '+(rr.map_generation||0):' · no map';
+      return '<div class="'+cls+'"><div><div class=room-item-name>'+(rr.has_password?'🔒':'◫')+' '+rr.room_id+'</div><div class=room-item-meta>↻'+rr.relay_count+' · 👁'+rr.viewer_count+mapMeta+' · '+rr.created_secs_ago+'s</div></div><button class="room-action-btn monitor" data-monitor="'+rr.room_id+'">'+(isActive?'Active':'Monitor')+'</button><button class="room-action-btn delete" data-delete="'+rr.room_id+'">✕</button></div>';
     }).join('');
     D.roomList.querySelectorAll('[data-monitor]').forEach(btn=>btn.addEventListener('click',()=>{const rid=btn.dataset.monitor;if(rid!==ST.roomId)monitorRoom(rid);}));
     D.roomList.querySelectorAll('[data-delete]').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();deleteRoom(btn.dataset.delete);}));

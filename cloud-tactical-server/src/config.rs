@@ -25,6 +25,9 @@ pub struct ServerConfig {
 
     #[serde(default = "default_max_clients_per_room")]
     pub max_clients_per_room: usize,
+
+    #[serde(default = "default_max_map_image_bytes")]
+    pub max_map_image_bytes: usize,
 }
 
 fn default_host() -> String {
@@ -59,6 +62,10 @@ fn default_max_clients_per_room() -> usize {
     32
 }
 
+fn default_max_map_image_bytes() -> usize {
+    8 * 1024 * 1024
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -70,6 +77,7 @@ impl Default for ServerConfig {
             max_rooms: default_max_rooms(),
             room_password_required: default_room_password_required(),
             max_clients_per_room: default_max_clients_per_room(),
+            max_map_image_bytes: default_max_map_image_bytes(),
         }
     }
 }
@@ -77,22 +85,19 @@ impl Default for ServerConfig {
 impl ServerConfig {
     pub fn load() -> Self {
         // 优先读环境变量 CONFIG_PATH，其次读默认路径
-        let path = std::env::var("CONFIG_PATH")
-            .unwrap_or_else(|_| "config/server.yaml".into());
+        let path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "config/server.yaml".into());
 
         match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                match serde_yaml::from_str(&contents) {
-                    Ok(config) => {
-                        tracing::info!("Loaded config from {path}");
-                        config
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse config {path}: {e}, using defaults");
-                        Self::default()
-                    }
+            Ok(contents) => match serde_yaml::from_str(&contents) {
+                Ok(config) => {
+                    tracing::info!("Loaded config from {path}");
+                    config
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("Failed to parse config {path}: {e}, using defaults");
+                    Self::default()
+                }
+            },
             Err(_) => {
                 tracing::info!("No config file at {path}, using defaults");
                 Self::default()
