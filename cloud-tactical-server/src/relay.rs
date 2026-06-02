@@ -13,13 +13,21 @@ pub async fn handle_relay(
     mut ws: WebSocket,
     room: RoomHandle,
     client_id: String,
+    max_per_room: usize,
 ) {
     let session_id = uuid::Uuid::new_v4().to_string();
-    tracing::info!("Relay {client_id} connected to room {} (session {session_id})", room.info.room_id);
+    tracing::info!("Relay {client_id} connecting to room {} (session {session_id})", room.info.room_id);
 
-    // 等待 JoinRequest
+    // 检查房间容量
+    if !room.try_acquire_relay(max_per_room) {
+        tracing::warn!("Relay {client_id}: room {} is full", room.info.room_id);
+        let _ = ws.send(Message::Close(None)).await;
+        return;
+    }
+
+    // 等待 JoinRequest 并校验密码
     let server_now = unix_ms();
-    let joined = match wait_for_join(&mut ws).await {
+    let joined = match wait_for_join(&mut ws, &room).await {
         Ok(true) => {
             send_envelope(&mut ws, WsEnvelope {
                 payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
@@ -33,20 +41,29 @@ pub async fn handle_relay(
             true
         }
         Ok(false) => {
+            // 协议版本不匹配或密码错误
+            let reason = if !room.check_password("") {
+                // This won't happen here — wait_for_join handles password check
+                "Invalid password".to_string()
+            } else {
+                "Invalid protocol version".to_string()
+            };
             send_envelope(&mut ws, WsEnvelope {
                 payload: Some(ws_envelope::Payload::JoinResponse(JoinResponse {
                     accepted: false,
                     session_id: String::new(),
                     server_protocol_version: 1,
-                    error_message: "Invalid protocol version".into(),
+                    error_message: reason,
                     server_time_ms: server_now,
                 })),
             }).await;
-            let _ = ws.close().await;
+            let _ = ws.send(Message::Close(None)).await;
+            room.release_relay();
             false
         }
         Err(_) => {
-            let _ = ws.close().await;
+            let _ = ws.send(Message::Close(None)).await;
+            room.release_relay();
             false
         }
     };
@@ -94,10 +111,11 @@ pub async fn handle_relay(
         }
     }
 
+    room.release_relay();
     tracing::info!("Relay {client_id} disconnected from room {}", room.info.room_id);
 }
 
-async fn wait_for_join(ws: &mut WebSocket) -> Result<bool, ()> {
+async fn wait_for_join(ws: &mut WebSocket, room: &RoomHandle) -> Result<bool, ()> {
     let timeout = tokio::time::sleep(std::time::Duration::from_secs(5));
     tokio::pin!(timeout);
 
@@ -108,7 +126,16 @@ async fn wait_for_join(ws: &mut WebSocket) -> Result<bool, ()> {
                     Some(Ok(Message::Binary(data))) => {
                         if let Ok(envelope) = WsEnvelope::decode(data.as_ref()) {
                             if let Some(ws_envelope::Payload::JoinRequest(req)) = envelope.payload {
-                                return Ok(req.protocol_version == 1);
+                                // 校验协议版本
+                                if req.protocol_version != 1 {
+                                    return Ok(false);
+                                }
+                                // 校验房间密码
+                                if !room.check_password(&req.password) {
+                                    tracing::warn!("Relay: wrong password for room {}", room.info.room_id);
+                                    return Ok(false);
+                                }
+                                return Ok(true);
                             }
                         }
                     }

@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::config::ServerConfig;
@@ -18,6 +20,8 @@ struct RoomState {
     info: RoomInfo,
     observation_tx: mpsc::UnboundedSender<ParsedObservation>,
     snapshot_tx: broadcast::Sender<FusionResult>,
+    relay_counter: Arc<AtomicUsize>,
+    viewer_counter: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -25,6 +29,62 @@ pub struct RoomHandle {
     pub info: RoomInfo,
     pub observation_tx: mpsc::UnboundedSender<ParsedObservation>,
     pub snapshot_tx: broadcast::Sender<FusionResult>,
+    pub relay_counter: Arc<AtomicUsize>,
+    pub viewer_counter: Arc<AtomicUsize>,
+}
+
+impl RoomHandle {
+    /// Verify password against stored hash. Returns true if room has no password.
+    pub fn check_password(&self, password: &str) -> bool {
+        match &self.info.password_hash {
+            None => true,
+            Some(hash) => verify_password(password, hash),
+        }
+    }
+
+    /// Try to acquire a relay slot. Returns true if under max_clients_per_room.
+    pub fn try_acquire_relay(&self, max_per_room: usize) -> bool {
+        let current = self.relay_counter.fetch_add(1, Ordering::SeqCst);
+        // Check limit BEFORE incrementing? No, we already incremented.
+        // Check total (relay + viewer)
+        let viewers = self.viewer_counter.load(Ordering::SeqCst);
+        if current + viewers + 1 > max_per_room {
+            // Rollback
+            self.relay_counter.fetch_sub(1, Ordering::SeqCst);
+            return false;
+        }
+        true
+    }
+
+    pub fn release_relay(&self) {
+        self.relay_counter.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    pub fn try_acquire_viewer(&self, max_per_room: usize) -> bool {
+        let current = self.viewer_counter.fetch_add(1, Ordering::SeqCst);
+        let relays = self.relay_counter.load(Ordering::SeqCst);
+        if current + relays + 1 > max_per_room {
+            self.viewer_counter.fetch_sub(1, Ordering::SeqCst);
+            return false;
+        }
+        true
+    }
+
+    pub fn release_viewer(&self) {
+        self.viewer_counter.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Refresh counts from atomics into RoomInfo
+    pub fn snapshot_info(&self) -> RoomInfo {
+        RoomInfo {
+            room_id: self.info.room_id.clone(),
+            password_hash: self.info.password_hash.clone(),
+            created_at: self.info.created_at,
+            relay_count: self.relay_counter.load(Ordering::SeqCst),
+            viewer_count: self.viewer_counter.load(Ordering::SeqCst),
+            map_generation: self.info.map_generation,
+        }
+    }
 }
 
 pub struct RoomManager {
@@ -57,6 +117,8 @@ impl RoomManager {
 
         let (obs_tx, obs_rx) = mpsc::unbounded_channel();
         let (snap_tx, _snap_rx) = broadcast::channel(64);
+        let relay_counter = Arc::new(AtomicUsize::new(0));
+        let viewer_counter = Arc::new(AtomicUsize::new(0));
 
         let info = RoomInfo {
             room_id: room_id.clone(),
@@ -88,6 +150,8 @@ impl RoomManager {
             info,
             observation_tx: obs_tx.clone(),
             snapshot_tx: snap_tx.clone(),
+            relay_counter: relay_counter.clone(),
+            viewer_counter: viewer_counter.clone(),
         };
 
         self.rooms.insert(
@@ -96,6 +160,8 @@ impl RoomManager {
                 info: handle.info.clone(),
                 observation_tx: obs_tx,
                 snapshot_tx: snap_tx,
+                relay_counter,
+                viewer_counter,
             },
         );
 
@@ -107,6 +173,8 @@ impl RoomManager {
             info: state.info.clone(),
             observation_tx: state.observation_tx.clone(),
             snapshot_tx: state.snapshot_tx.clone(),
+            relay_counter: state.relay_counter.clone(),
+            viewer_counter: state.viewer_counter.clone(),
         })
     }
 
@@ -121,7 +189,19 @@ impl RoomManager {
     }
 
     pub fn list_rooms(&self) -> Vec<RoomInfo> {
-        self.rooms.values().map(|s| s.info.clone()).collect()
+        self.rooms
+            .values()
+            .map(|s| {
+                RoomInfo {
+                    room_id: s.info.room_id.clone(),
+                    password_hash: s.info.password_hash.clone(),
+                    created_at: s.info.created_at,
+                    relay_count: s.relay_counter.load(Ordering::SeqCst),
+                    viewer_count: s.viewer_counter.load(Ordering::SeqCst),
+                    map_generation: s.info.map_generation,
+                }
+            })
+            .collect()
     }
 
     pub fn remove_room(&mut self, room_id: &str) -> bool {
@@ -130,6 +210,10 @@ impl RoomManager {
 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
+    }
+
+    pub fn max_clients_per_room(&self) -> usize {
+        self.config.max_clients_per_room
     }
 }
 
@@ -206,7 +290,7 @@ fn hash_password(password: &str) -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn verify_password(password: &str, hash: &str) -> bool {
+pub fn verify_password(password: &str, hash: &str) -> bool {
     hash_password(password) == hash
 }
 

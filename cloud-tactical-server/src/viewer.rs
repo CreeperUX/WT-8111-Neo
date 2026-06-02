@@ -14,8 +14,16 @@ pub async fn handle_viewer(
     mut ws: WebSocket,
     room: RoomHandle,
     client_id: String,
+    max_per_room: usize,
 ) {
-    tracing::info!("Viewer {client_id} connected to room {}", room.info.room_id);
+    tracing::info!("Viewer {client_id} connecting to room {}", room.info.room_id);
+
+    // 检查房间容量
+    if !room.try_acquire_viewer(max_per_room) {
+        tracing::warn!("Viewer {client_id}: room {} is full", room.info.room_id);
+        let _ = ws.send(Message::Close(None)).await;
+        return;
+    }
 
     let mut snap_rx = room.snapshot_tx.subscribe();
 
@@ -57,6 +65,7 @@ pub async fn handle_viewer(
         }
     }
 
+    room.release_viewer();
     tracing::info!("Viewer {client_id} disconnected from room {}", room.info.room_id);
 }
 

@@ -309,6 +309,15 @@ function readVarint(buf, off) {
   }
   return { v: Number(r), p };
 }
+
+// Sign-extend a varint value from 32 bits (for int32/sint32 fields)
+// protobuf int32 uses varint encoding; negative values are stored as
+// sign-extended 64-bit unsigned integers.
+function int32(v) {
+  if (v > 0x7FFFFFFF) return v - 0x100000000;
+  return v;
+}
+
 function readStr(buf, off, len) { return new TextDecoder().decode(buf.slice(off, off+len)); }
 
 function parseFusedTrack(data) {
@@ -322,16 +331,15 @@ function parseFusedTrack(data) {
     if (wt===0) { const vr = readVarint(data,p); p=vr.p;
       switch(fn) {
         case 2:t.label_id=vr.v;break; case 3:t.class_id=vr.v;break; case 4:t.affiliation=vr.v;break;
-        case 5:t.x_u16=vr.v;break; case 6:t.y_u16=vr.v;break; case 7:t.heading_i16=vr.v;break;
+        case 5:t.x_u16=vr.v;break; case 6:t.y_u16=vr.v;break;
+        case 7:t.heading_i16=int32(vr.v);break;
+        case 8:t.vx_i16=int32(vr.v);break; case 9:t.vy_i16=int32(vr.v);break;
         case 10:t.confidence_u8=vr.v;break; case 11:t.last_seen_ms_ago=vr.v;break;
         case 12:t.source_count=vr.v;break; case 13:t.flags=vr.v;break;
         case 14:t.total_age_ms=vr.v;break; case 15:t.contributing_clients=vr.v;break;
       }
     } else if (wt===2) { const vr = readVarint(data,p); const len=vr.v; p=vr.p;
       if (fn===1) t.track_id=readStr(data,p,len); p+=len; }
-    else if (wt===5) { const dv=new DataView(data.buffer,data.byteOffset+p,4);
-      const v=dv.getInt32(0,true); p+=4;
-      if (fn===8) t.vx_i16=v; else if (fn===9) t.vy_i16=v; }
   }
   return t.track_id ? t : null;
 }
@@ -348,7 +356,7 @@ function parseROI(data) {
         case 2:r.center_x_u16=vr.v;break; case 3:r.center_y_u16=vr.v;break;
         case 4:r.anchor_x_u16=vr.v;break; case 5:r.anchor_y_u16=vr.v;break;
         case 6:r.radius_major_u16=vr.v;break; case 7:r.radius_minor_u16=vr.v;break;
-        case 8:r.heading_i16=vr.v;break; case 9:r.expires_in_ms=vr.v;break;
+        case 8:r.heading_i16=int32(vr.v);break; case 9:r.expires_in_ms=vr.v;break;
         case 10:r.confidence_u8=vr.v;break;
       }
     } else if (wt===2) { const vr = readVarint(data,p); const len=vr.v; p=vr.p;

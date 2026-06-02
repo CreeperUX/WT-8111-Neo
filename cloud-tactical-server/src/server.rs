@@ -1,11 +1,12 @@
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
@@ -90,7 +91,7 @@ struct RoomResponse {
 async fn create_room(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateRoomRequest>,
-) -> Result<Json<RoomResponse>, AppError> {
+) -> Result<(StatusCode, Json<RoomResponse>), AppError> {
     let mut rooms = state.rooms.lock().await;
     let room_id = req
         .room_id
@@ -98,11 +99,11 @@ async fn create_room(
 
     let handle = rooms.create_room(room_id.clone(), req.password)?;
 
-    Ok(Json(RoomResponse {
+    Ok((StatusCode::CREATED, Json(RoomResponse {
         room_id,
         relay_url: format!("/ws/rooms/{}/relay", handle.info.room_id),
         viewer_url: format!("/ws/rooms/{}/viewer", handle.info.room_id),
-    }))
+    })))
 }
 
 async fn list_rooms(
@@ -135,12 +136,14 @@ async fn get_room(
         .get_room(&room_id)
         .ok_or(RoomError::RoomNotFound)?;
 
+    let info = room.snapshot_info();
+
     Ok(Json(serde_json::json!({
-        "room_id": room.info.room_id,
-        "has_password": room.info.password_hash.is_some(),
-        "created_secs_ago": room.info.created_at.elapsed().as_secs(),
-        "relay_count": room.info.relay_count,
-        "viewer_count": room.info.viewer_count,
+        "room_id": info.room_id,
+        "has_password": info.password_hash.is_some(),
+        "created_secs_ago": info.created_at.elapsed().as_secs(),
+        "relay_count": info.relay_count,
+        "viewer_count": info.viewer_count,
         "relay_url": format!("/ws/rooms/{}/relay", room_id),
         "viewer_url": format!("/ws/rooms/{}/viewer", room_id),
     })))
@@ -163,7 +166,7 @@ async fn join_room(
 
     if let Some(ref _hash) = room.info.password_hash {
         let provided = req.password.unwrap_or_default();
-        if !rooms.verify_password(&room_id, &provided) {
+        if !room.check_password(&provided) {
             return Err(RoomError::InvalidPassword.into());
         }
     }
@@ -178,6 +181,11 @@ async fn join_room(
 
 // ── WebSocket handlers ──
 
+#[derive(Deserialize)]
+struct ViewerQuery {
+    password: Option<String>,
+}
+
 async fn ws_relay(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
@@ -185,26 +193,34 @@ async fn ws_relay(
 ) -> Result<Response, AppError> {
     let rooms = state.rooms.lock().await;
     let room = rooms.get_room(&room_id).ok_or(RoomError::RoomNotFound)?;
+    let max_per_room = state.config.max_clients_per_room;
 
     let client_id = uuid::Uuid::new_v4().to_string();
 
     Ok(ws.on_upgrade(move |socket| {
-        crate::relay::handle_relay(socket, room, client_id)
+        crate::relay::handle_relay(socket, room, client_id, max_per_room)
     }))
 }
 
 async fn ws_viewer(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
+    Query(query): Query<ViewerQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
     let rooms = state.rooms.lock().await;
     let room = rooms.get_room(&room_id).ok_or(RoomError::RoomNotFound)?;
 
+    // Viewer password check via query parameter
+    if !room.check_password(&query.password.unwrap_or_default()) {
+        return Err(RoomError::InvalidPassword.into());
+    }
+
+    let max_per_room = state.config.max_clients_per_room;
     let client_id = uuid::Uuid::new_v4().to_string();
 
     Ok(ws.on_upgrade(move |socket| {
-        crate::viewer::handle_viewer(socket, room, client_id)
+        crate::viewer::handle_viewer(socket, room, client_id, max_per_room)
     }))
 }
 

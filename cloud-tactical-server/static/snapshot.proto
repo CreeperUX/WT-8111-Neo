@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package wt8111;
+
+// 云端 → viewer：融合态势快照
+message FusedSnapshot {
+  uint32 protocol_version = 1;          // 协议版本号
+  string room_id = 2;                   // 房间 ID
+  uint64 seq = 3;                       // 服务端帧序号
+  uint64 server_time_ms = 4;            // 服务端时间戳
+  uint32 map_generation = 5;            // 地图 generation
+  repeated FusedTrack tracks = 6;       // 融合目标列表
+  repeated InterestRegion interest_regions = 7;  // 兴趣区域列表
+  TacticalSummary summary = 8;          // 态势摘要
+}
+
+message FusedTrack {
+  string track_id = 1;          // 云端分配的稳定 trackId
+  uint32 label_id = 2;          // 会话字典 label 索引
+  uint32 class_id = 3;          // 对象分类
+  uint32 affiliation = 4;       // 阵营
+  uint32 x_u16 = 5;             // 0..65535 量化 X
+  uint32 y_u16 = 6;             // 0..65535 量化 Y
+  int32 heading_i16 = 7;        // 朝向 (可选)
+  int32 vx_i16 = 8;             // X 方向速度 (可选, 量化)
+  int32 vy_i16 = 9;             // Y 方向速度 (可选, 量化)
+  uint32 confidence_u8 = 10;    // 置信度 0..255
+  uint32 last_seen_ms_ago = 11; // 最近被观测到距今毫秒
+  uint32 source_count = 12;     // 观测来源数 (不同 client 数量)
+  uint32 flags = 13;            // 标志位
+  uint32 total_age_ms = 14;     // 最近一次更新的总数据年龄 (测量延迟+传输延迟)
+  uint32 contributing_clients = 15; // 最近 2 秒内贡献过此 track 的 client 数
+}
+
+// 目标消失后的兴趣区域
+// 椭圆形状：中心沿速度方向偏移，主轴对齐运动方向
+message InterestRegion {
+  string track_id = 1;            // 关联的 trackId
+
+  // 椭圆中心 (速度外推位置)
+  uint32 center_x_u16 = 2;
+  uint32 center_y_u16 = 3;
+
+  // 最后已知位置 (锚点，可画连线或菱形标记)
+  uint32 anchor_x_u16 = 4;
+  uint32 anchor_y_u16 = 5;
+
+  // 半长轴 (沿运动方向，增长较快)
+  uint32 radius_major_u16 = 6;
+
+  // 半短轴 (垂直于运动方向，增长较慢)
+  uint32 radius_minor_u16 = 7;
+
+  // 主轴方向 (度 × 100, 0=北)
+  int32 heading_i16 = 8;
+
+  uint32 expires_in_ms = 9;       // 剩余有效时间
+  uint32 confidence_u8 = 10;      // 置信度 0..255 (随时间衰减)
+}
+
+message TacticalSummary {
+  uint32 total_tracks = 1;      // 总目标数
+  uint32 hostile_tracks = 2;    // 敌方目标数
+  uint32 friendly_tracks = 3;   // 友方目标数
+  uint32 stale_tracks = 4;      // 过期目标数
+  uint32 interest_regions = 5;  // 兴趣区域数
+}

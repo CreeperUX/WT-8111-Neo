@@ -143,8 +143,12 @@ impl FusionEngine {
 
         for obs in &observations {
             for obj in &obs.objects {
+                // ── 时间戳校验: 限制 observed_at_ms 在合理范围 ──
+                // 防止客户端用未来时间戳获得过高融合权重
+                let clamped_observed_at = clamp_timestamp(obs.observed_at_ms, now_ms);
+
                 // ── 计算 total_age_ms ──
-                let transit_ms = now_ms.saturating_sub(obs.observed_at_ms) as u32;
+                let transit_ms = now_ms.saturating_sub(clamped_observed_at) as u32;
                 let total_age_ms = transit_ms.saturating_add(obs.measurement_age_ms);
 
                 let fingerprint = TrackFingerprint {
@@ -493,4 +497,32 @@ fn spatial_dist(x1: u32, y1: u32, x2: u32, y2: u32) -> u32 {
 /// 计算 EMA 权重 α = exp(-total_age_ms / τ)
 fn compute_alpha(total_age_ms: u32) -> f64 {
     (-(total_age_ms as f64) / FUSION_TAU_MS).exp().clamp(0.0, 1.0)
+}
+
+/// 时间戳校验: 限制 observed_at_ms 在合理范围
+/// - 不允许超过 30s 的未来时间 (防止权重作弊)
+/// - 不允许超过 60s 的过旧时间 (防止重放旧数据)
+/// - 超限则 clamp 到边界值
+fn clamp_timestamp(observed_at_ms: u64, server_now_ms: u64) -> u64 {
+    const MAX_FUTURE_MS: u64 = 30_000;  // 30s
+    const MAX_PAST_MS: u64 = 60_000;    // 60s
+
+    let earliest = server_now_ms.saturating_sub(MAX_PAST_MS);
+    let latest = server_now_ms.saturating_add(MAX_FUTURE_MS);
+
+    if observed_at_ms > latest {
+        tracing::warn!(
+            "Clamping future timestamp: observed_at_ms={} > server_now+30s={}",
+            observed_at_ms, latest
+        );
+        latest
+    } else if observed_at_ms < earliest {
+        tracing::warn!(
+            "Clamping stale timestamp: observed_at_ms={} < server_now-60s={}",
+            observed_at_ms, earliest
+        );
+        earliest
+    } else {
+        observed_at_ms
+    }
 }

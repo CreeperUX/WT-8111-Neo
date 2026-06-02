@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package wt8111;
+
+// 本机 relay → 云端：上传观测帧
+message ObservationFrame {
+  uint32 protocol_version = 1;    // 协议版本号
+  string session_id = 2;          // 会话 ID
+  string room_id = 3;             // 房间 ID
+  string client_id = 4;           // 客户端 ID
+  string player_name = 5;         // 玩家名称
+  uint64 seq = 6;                 // 客户端帧序号
+  uint64 observed_at_ms = 7;      // 采样时间戳 (本机毫秒)
+  uint32 map_generation = 8;      // 地图 generation
+  string map_id = 9;              // 地图 ID (可选)
+  ObservedPlayer player = 10;     // 玩家自身数据
+  repeated ObservedObject objects = 11;   // 观测目标数组
+  repeated uint32 removed_local_ids = 12; // 本 tick 消失的 localId
+  uint32 measurement_age_ms = 13;  // 客户端自报: 从 8111 采到数据到打包发送间隔了多久 (毫秒)
+}
+
+message ObservedPlayer {
+  uint32 x_u16 = 1;               // 0..65535 量化 X
+  uint32 y_u16 = 2;               // 0..65535 量化 Y
+  int32 heading_i16 = 3;          // 朝向 (可选)
+}
+
+message ObservedObject {
+  uint32 local_id = 1;            // 本机分配的目标 ID (客户端内稳定)
+  uint32 label_id = 2;            // 会话字典 label 索引
+  uint32 class_id = 3;            // 对象分类: 0=air 1=ground 2=objective 3=spawn 4=other
+  uint32 affiliation = 4;         // 阵营: 0=friend 1=hostile 2=neutral 3=unknown
+  uint32 x_u16 = 5;              // 0..65535 量化 X
+  uint32 y_u16 = 6;              // 0..65535 量化 Y
+  int32 heading_i16 = 7;         // 朝向 (可选)
+  uint32 color_id = 8;           // 会话字典颜色索引 (可选)
+  uint32 flags = 9;              // 标志位: bit0=blink bit1=icon_bg...
+}
