@@ -28,7 +28,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/version", get(version))
         .route("/api/rooms", get(list_rooms).post(create_room))
-        .route("/api/rooms/{room_id}", get(get_room))
+        .route("/api/rooms/{room_id}", get(get_room).delete(delete_room))
         .route("/api/rooms/{room_id}/join", post(join_room))
         .route("/api/config", get(get_config))
         .route("/ws/rooms/{room_id}/relay", get(ws_relay))
@@ -147,6 +147,19 @@ async fn get_room(
         "relay_url": format!("/ws/rooms/{}/relay", room_id),
         "viewer_url": format!("/ws/rooms/{}/viewer", room_id),
     })))
+}
+
+async fn delete_room(
+    State(state): State<Arc<AppState>>,
+    Path(room_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut rooms = state.rooms.lock().await;
+    if rooms.remove_room(&room_id) {
+        tracing::info!("Room {} deleted", room_id);
+        Ok(Json(serde_json::json!({"ok": true, "deleted": room_id})))
+    } else {
+        Err(RoomError::RoomNotFound.into())
+    }
 }
 
 #[derive(Deserialize)]

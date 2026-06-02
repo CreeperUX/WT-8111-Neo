@@ -496,7 +496,6 @@ function updateServerInfo() {
 }
 
 function updateRoomStats() {
-  // Fetch room info for the current monitored room
   if (!ST.roomId) { D.roomStats.textContent = ''; return; }
   fetch(`/api/rooms/${ST.roomId}`)
     .then(r => r.json())
@@ -504,6 +503,31 @@ function updateRoomStats() {
       D.roomStats.textContent = `${info.relay_count || 0} relays · ${info.viewer_count || 0} viewers`;
     }).catch(() => {});
 }
+
+async function deleteRoom(roomId, el) {
+  if (!confirm(`Delete room "${roomId}"?\nAll relay and viewer connections will be dropped.`)) return;
+  try {
+    const r = await fetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
+    if (r.ok) {
+      // If we were monitoring this room, disconnect
+      if (ST.roomId === roomId) {
+        if (ws) { ws.close(); ws = null; }
+        ST.roomId = null;
+        ST.roomPassword = '';
+        ST.connected = false;
+        D.statusConn.innerHTML = '<span>●</span> No Room';
+        D.statusConn.className = 'status-pill disconnected';
+        D.roomName.textContent = '—';
+        D.roomStats.textContent = '';
+        D.loading.style.display = 'flex';
+        D.loading.querySelector('span').textContent = 'Select a room to begin monitoring';
+      }
+      await fetchRooms();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+let roomRefreshTimer = null;
 
 async function fetchRooms() {
   try {
@@ -517,7 +541,7 @@ async function fetchRooms() {
         const cls = isActive ? 'room-item active-room' : 'room-item';
         const pw = rr.has_password ? '🔒' : '◫';
         return `<div class="${cls}">
-          <div>
+          <div style="flex:1;min-width:0">
             <span style="font-weight:800">${pw} ${rr.room_id}</span>
             <div class="room-meta">↻${rr.relay_count} relays · 👁${rr.viewer_count} viewers · ${rr.created_secs_ago}s ago</div>
           </div>
@@ -525,11 +549,14 @@ async function fetchRooms() {
             <button class="room-action-btn monitor" data-action="monitor" data-rid="${rr.room_id}" data-haspw="${rr.has_password}">
               ${isActive ? 'Active' : 'Monitor'}
             </button>
+            <button class="room-action-btn delete" data-action="delete" data-rid="${rr.room_id}" title="Delete room">
+              ✕
+            </button>
           </div>
         </div>`;
       }).join('');
 
-    // Bind monitor buttons
+    // Bind monitor + delete buttons
     D.roomList.querySelectorAll('[data-action="monitor"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const rid = btn.dataset.rid;
@@ -545,6 +572,14 @@ async function fetchRooms() {
           monitorRoom(rid);
           setTimeout(fetchRooms, 300);
         }
+      });
+    });
+
+    // Bind delete buttons
+    D.roomList.querySelectorAll('[data-action="delete"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteRoom(btn.dataset.rid);
       });
     });
   } catch(e) {
@@ -631,6 +666,9 @@ function bindEvents() {
     updateServerInfo();
     fetchRooms();
     updateRoomStats();
+    // Auto-refresh room list every 10s
+    if (roomRefreshTimer) clearInterval(roomRefreshTimer);
+    roomRefreshTimer = setInterval(fetchRooms, 10000);
   });
   $('#btn-settings').addEventListener('click', () => {
     D.modalSet.classList.remove('hidden');
@@ -638,9 +676,17 @@ function bindEvents() {
   });
   $('#btn-create-room').addEventListener('click', createRoom);
   $('#btn-refresh-rooms').addEventListener('click', fetchRooms);
-  $('#btn-close-room-modal').addEventListener('click', () => D.modalRoom.classList.add('hidden'));
+  $('#btn-close-room-modal').addEventListener('click', () => {
+    D.modalRoom.classList.add('hidden');
+    if (roomRefreshTimer) { clearInterval(roomRefreshTimer); roomRefreshTimer = null; }
+  });
   $('#btn-close-settings').addEventListener('click', () => D.modalSet.classList.add('hidden'));
-  D.modalRoom.addEventListener('click', e => { if (e.target===e.currentTarget) D.modalRoom.classList.add('hidden'); });
+  D.modalRoom.addEventListener('click', e => {
+    if (e.target===e.currentTarget) {
+      D.modalRoom.classList.add('hidden');
+      if (roomRefreshTimer) { clearInterval(roomRefreshTimer); roomRefreshTimer = null; }
+    }
+  });
   D.modalSet.addEventListener('click', e => { if (e.target===e.currentTarget) D.modalSet.classList.add('hidden'); });
 
   // Copy server info on click
