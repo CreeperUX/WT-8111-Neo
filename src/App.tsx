@@ -9,9 +9,11 @@ import {
   MapPinned,
   MoreHorizontal,
   MousePointer2,
+  Plane,
   RadioTower,
   RotateCcw,
   Ruler,
+  Shield,
   Target,
   Waypoints,
   ZoomIn,
@@ -93,7 +95,9 @@ type MapSelection =
     };
 
 type Affiliation = "friend" | "hostile" | "neutral" | "unknown";
+type WorkbenchMode = "ground" | "air";
 type SymbolKind =
+  | "aircraft"
   | "armor"
   | "airDefense"
   | "artillery"
@@ -359,6 +363,17 @@ function inferSymbolKind(object: WTMapObject): SymbolKind {
     return "airDefense";
   }
 
+  if (
+    text.includes("aircraft") ||
+    text.includes("fighter") ||
+    text.includes("bomber") ||
+    text.includes("helicopter") ||
+    text.includes("plane") ||
+    text.includes("drone")
+  ) {
+    return "aircraft";
+  }
+
   if (text.includes("artillery") || text.includes("howitzer") || text.includes("mortar")) {
     return "artillery";
   }
@@ -417,7 +432,10 @@ function classifyObject(object: WTMapObject): Exclude<ObjectFilter, "all"> {
   if (
     text.includes("aircraft") ||
     text.includes("fighter") ||
-    text.includes("bomber")
+    text.includes("bomber") ||
+    text.includes("helicopter") ||
+    text.includes("plane") ||
+    text.includes("drone")
   ) {
     return "air";
   }
@@ -780,6 +798,15 @@ function NatoIcon({
       <g {...iconProps}>
         <path d={`M ${-width * 0.2} ${height * 0.18} Q 0 ${-height * 0.35} ${width * 0.2} ${height * 0.18}`} />
         <line x1="0" y1={-height * 0.25} x2="0" y2={height * 0.22} />
+      </g>
+    );
+  }
+
+  if (kind === "aircraft") {
+    return (
+      <g {...iconProps} transform={`rotate(${heading})`}>
+        <path d={`M 0 ${-height * 0.34} L ${width * 0.2} ${height * 0.2} L 0 ${height * 0.08} L ${-width * 0.2} ${height * 0.2} Z`} />
+        <line x1="0" y1={height * 0.08} x2="0" y2={height * 0.32} />
       </g>
     );
   }
@@ -1591,8 +1618,154 @@ function ToolPanel({
   );
 }
 
+function AirTacticalPanel({
+  mapInfo,
+  objects,
+  hiddenObjectKeys,
+  toggleObjectVisibility
+}: {
+  mapInfo?: WTMapInfo;
+  objects: WTMapObject[];
+  hiddenObjectKeys: Set<string>;
+  toggleObjectVisibility: (key: string) => void;
+}) {
+  const player = useMemo(() => findPlayer(objects), [objects]);
+  const airObjects = useMemo(
+    () =>
+      sortObjectsByTacticalPriority(
+        objects,
+        mapInfo,
+        player
+          ? {
+              ref: { kind: "player" },
+              label: "Player",
+              x: player.x ?? 0,
+              y: player.y ?? 0,
+              color: objectColor(player)
+            }
+          : undefined
+      ).filter(({ object }) => classifyObject(object) === "air"),
+    [objects, mapInfo, player]
+  );
+  const hostileAir = useMemo(
+    () => airObjects.filter(({ object }) => inferAffiliation(object) === "hostile"),
+    [airObjects]
+  );
+  const friendlyAir = useMemo(
+    () => airObjects.filter(({ object }) => inferAffiliation(object) === "friend"),
+    [airObjects]
+  );
+  const nearestHostile = hostileAir[0];
+  const nearestHostileRange =
+    player && nearestHostile
+      ? distanceBetween(player, nearestHostile.object, mapInfo)
+      : undefined;
+  const nearestHostileBearing =
+    player && nearestHostile ? bearingBetween(player, nearestHostile.object) : undefined;
+
+  return (
+    <aside className="tool-panel air-panel">
+      <section className="panel-block">
+        <div className="section-title">
+          <Plane size={18} />
+          Air Picture
+        </div>
+        <div className="object-summary air-summary">
+          <div>
+            <strong>{airObjects.length}</strong>
+            <span>Air Tracks</span>
+          </div>
+          <div>
+            <strong>{hostileAir.length}</strong>
+            <span>Hostile</span>
+          </div>
+          <div>
+            <strong>{friendlyAir.length}</strong>
+            <span>Friendly</span>
+          </div>
+          <div>
+            <strong>{nearestHostileRange === undefined ? "--" : nearestHostileRange.toFixed(0)}</strong>
+            <span>Nearest Range</span>
+          </div>
+        </div>
+        <div className="metric-grid">
+          <span>Nearest Hostile</span>
+          <strong>{nearestHostile ? objectLabel(nearestHostile.object) : "--"}</strong>
+          <span>Bearing</span>
+          <strong>{nearestHostileBearing === undefined ? "--" : `${nearestHostileBearing.toFixed(1)} deg`}</strong>
+          <span>Player Pos</span>
+          <strong>{formatWorldPoint(player, mapInfo)}</strong>
+          <span>Fusion Mode</span>
+          <strong>8111 local demo</strong>
+        </div>
+      </section>
+
+      <section className="panel-block air-track-block">
+        <div className="section-title">
+          <Shield size={18} />
+          Air Track Demo
+        </div>
+        <div className="air-track-head">
+          <span>Track</span>
+          <span>Side</span>
+          <span>Range</span>
+          <span>Show</span>
+        </div>
+        <div className="air-track-list">
+          {airObjects.length === 0 && (
+            <div className="empty-state">No aircraft-class objects in current 8111 map data.</div>
+          )}
+          {airObjects.map(({ object, index, key }) => {
+            const affiliation = inferAffiliation(object);
+            const range =
+              player && hasMapPoint(object)
+                ? distanceBetween(player, object, mapInfo)
+                : undefined;
+            const isVisible = !hiddenObjectKeys.has(key);
+
+            return (
+              <div className={`air-track-row ${affiliation}`} key={key}>
+                <span className="object-dot" style={{ background: objectColor(object) }} />
+                <span>{objectLabel(object)}</span>
+                <strong>{affiliationTheme[affiliation].label}</strong>
+                <strong>{range === undefined ? "--" : range.toFixed(0)}</strong>
+                <button
+                  type="button"
+                  className={isVisible ? "visibility-button" : "visibility-button hidden"}
+                  onClick={() => toggleObjectVisibility(objectVisibilityKey(object, index))}
+                  title={isVisible ? "Hide track" : "Show track"}
+                >
+                  {isVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel-block">
+        <div className="section-title">
+          <RadioTower size={18} />
+          Cloud Path
+        </div>
+        <div className="split-notes">
+          <div>
+            <strong>Viewer</strong>
+            <span>Next step: subscribe to cloud FusedSnapshot.</span>
+          </div>
+          <div>
+            <strong>ROI</strong>
+            <span>Render server ellipses for aircraft-only lost tracks.</span>
+          </div>
+        </div>
+      </section>
+    </aside>
+  );
+}
+
 export default function App() {
   const mapData = useWT8111Map();
+  const [mode, setMode] = useState<WorkbenchMode>("ground");
   const [markers, setMarkers] = useState<MapMarker[]>([]);
   const [objectFilters, setObjectFilters] = useState<Set<Exclude<ObjectFilter, "all">>>(
     () => new Set(objectFilterOptions.map((option) => option.value))
@@ -1610,6 +1783,7 @@ export default function App() {
     : "--";
 
   const player = useMemo(() => findPlayer(objects), [objects]);
+  const modeTitle = mode === "ground" ? "Ground Fire Workbench" : "Air Tactical Workbench";
   const sourcePoint = useMemo(
     () => resolveFirePoint(sourceRef, objects, markers),
     [sourceRef, objects, markers]
@@ -1691,9 +1865,27 @@ export default function App() {
       <header className="topbar">
         <div className="brand-block">
           <div className="eyebrow">WT 8111 Neo</div>
-          <h1>Map Workbench</h1>
+          <h1>{modeTitle}</h1>
         </div>
         <div className="status-group">
+          <div className="mode-switch" aria-label="GUI mode">
+            <button
+              type="button"
+              className={mode === "ground" ? "active" : ""}
+              onClick={() => setMode("ground")}
+            >
+              <Shield size={16} />
+              Ground
+            </button>
+            <button
+              type="button"
+              className={mode === "air" ? "active" : ""}
+              onClick={() => setMode("air")}
+            >
+              <Plane size={16} />
+              Air
+            </button>
+          </div>
           <div className={`status-pill ${mapData.ok ? "online" : "offline"}`}>
             <Activity size={16} />
             {statusText}
@@ -1722,24 +1914,33 @@ export default function App() {
           setTargetRef={setTargetRef}
           setMapTarget={setMapTarget}
         />
-        <ToolPanel
-          mapInfo={mapData.mapInfo}
-          objects={objects}
-          markers={markers}
-          activeMarker={activeMarker}
-          sourcePoint={sourcePoint}
-          targetPoint={targetPoint}
-          objectFilters={objectFilters}
-          hiddenObjectKeys={hiddenObjectKeys}
-          filterMenuOpen={filterMenuOpen}
-          setFilterMenuOpen={setFilterMenuOpen}
-          toggleObjectFilter={toggleObjectFilter}
-          setAllObjectFilters={setAllObjectFilters}
-          toggleObjectVisibility={toggleObjectVisibility}
-          setSourceRef={setSourceRef}
-          setTargetRef={setTargetRef}
-          clearMarkers={clearMarkers}
-        />
+        {mode === "ground" ? (
+          <ToolPanel
+            mapInfo={mapData.mapInfo}
+            objects={objects}
+            markers={markers}
+            activeMarker={activeMarker}
+            sourcePoint={sourcePoint}
+            targetPoint={targetPoint}
+            objectFilters={objectFilters}
+            hiddenObjectKeys={hiddenObjectKeys}
+            filterMenuOpen={filterMenuOpen}
+            setFilterMenuOpen={setFilterMenuOpen}
+            toggleObjectFilter={toggleObjectFilter}
+            setAllObjectFilters={setAllObjectFilters}
+            toggleObjectVisibility={toggleObjectVisibility}
+            setSourceRef={setSourceRef}
+            setTargetRef={setTargetRef}
+            clearMarkers={clearMarkers}
+          />
+        ) : (
+          <AirTacticalPanel
+            mapInfo={mapData.mapInfo}
+            objects={objects}
+            hiddenObjectKeys={hiddenObjectKeys}
+            toggleObjectVisibility={toggleObjectVisibility}
+          />
+        )}
       </section>
 
       {!mapData.ok && (
