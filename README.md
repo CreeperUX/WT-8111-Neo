@@ -126,6 +126,8 @@ npm.cmd run service:build
 - [War Thunder 8111 API Reference](WT_8111_API_REFERENCE.md)
 - [War Thunder 8111 API Reference zh-CN](WT_8111_API_REFERENCE.zh-CN.md)
 - [Native Capture / Local Service Development Notes zh-CN](NATIVE_CAPTURE_PIPELINE.zh-CN.md)
+- [Client Cloud Tactical Adaptation zh-CN](CLIENT_CLOUD_ADAPTATION.zh-CN.md)
+- [Cloud Tactical Server zh-CN](CLOUD_TACTICAL_SERVER.zh-CN.md)
 
 When the API reference is updated, update both language versions in the same
 change.

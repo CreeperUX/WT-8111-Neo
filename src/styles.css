@@ -347,30 +347,14 @@ h1 {
   filter: drop-shadow(0 0 1.4px rgba(0, 0, 0, 0.72));
 }
 
-.hostile-track-line {
-  fill: none;
-  stroke: rgba(255, 99, 88, 0.86);
-  stroke-width: 2.4px;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.86));
-}
-
-.hostile-track-dot {
-  fill: #ff6358;
-  stroke: rgba(7, 9, 10, 0.9);
-  stroke-width: 1.4px;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.86));
-}
-
-.hostile-prediction-line {
+.cloud-roi-anchor {
   stroke: rgba(255, 99, 88, 0.66);
   stroke-width: 2px;
   stroke-dasharray: 5 5;
   stroke-linecap: round;
 }
 
-.hostile-roi-ring {
+.cloud-roi-ellipse {
   fill: rgba(255, 99, 88, 0.1);
   stroke: rgba(255, 99, 88, 0.9);
   stroke-width: 2.2px;
@@ -378,13 +362,13 @@ h1 {
   filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.86));
 }
 
-.hostile-roi-center {
+.cloud-roi-center {
   fill: #ff6358;
   stroke: rgba(7, 9, 10, 0.92);
   stroke-width: 1.3px;
 }
 
-.hostile-roi-label {
+.cloud-roi-label {
   fill: #ffd0cc;
   stroke: rgba(7, 9, 10, 0.82);
   stroke-width: 0.003px;
