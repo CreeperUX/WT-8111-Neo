@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
         AppWindow.SetIcon("Assets/AppIcon.ico");
         Closed += MainWindow_Closed;
 
+        NavFrame.Navigate(typeof(HomePage));
         _ = App.ServiceHost.StartAsync();
     }
 
