@@ -225,23 +225,26 @@ Text frames are not used in normal operation.
 1. POST  /api/rooms              → create room (or get existing room_id)
 2. POST  /api/rooms/{id}/join    → verify password (optional, if room has one)
 3. WS    /ws/rooms/{id}/relay    → open WebSocket
-4. Send  WsEnvelope { JoinRequest }
-5. Recv  WsEnvelope { JoinResponse }  (check accepted == true)
+4. Send  WsEnvelope { JoinRequest }  (includes password + protocol_version)
+5. Recv  WsEnvelope { JoinResponse }  (server validates password here)
 6. Loop:
      Send WsEnvelope { ObservationFrame }  at 1–2 Hz
      Send WsEnvelope { Ping }              every 30s
      Recv WsEnvelope { Pong }              → compute clock offset
 ```
 
+**Password validation on relay:** The server validates the password inside the `JoinRequest` message (step 4). If the password is wrong, `JoinResponse.accepted = false` is returned and the connection is closed. The password check happens server-side, using a salted hash stored at room creation.
+
 ### 4.3 Viewer Connection Flow
 
 ```
 1. GET   /api/rooms              → find room_id to monitor
-2. WS    /ws/rooms/{id}/viewer   → open WebSocket
+2. WS    /ws/rooms/{id}/viewer?password={password}   → open WebSocket
 3. Loop:
      Recv WsEnvelope { FusedSnapshot }  at ~2 Hz
-     (No auth needed — viewer is read-only)
 ```
+
+**Password validation on viewer:** Pass the room password as a query parameter `?password=xxx`. The server validates it before upgrading to WebSocket. If wrong/missing, the connection is rejected with HTTP 403.
 
 ### 4.4 Clock Synchronization (NTP-style)
 
@@ -846,10 +849,12 @@ relay WebSocket                   rooms::run_fusion_loop                viewer W
 |---|---|
 | Password hashing | Simple salted hash (NOT production-ready) |
 | Transport encryption | None (plain HTTP/WS) |
-| Authentication | Room password only |
-| Authorization | None (anyone with password = full access) |
+| Relay auth | Password validated in JoinRequest; wrong → rejected + connection closed |
+| Viewer auth | Password validated via `?password=` query param; wrong → HTTP 403 |
+| Room capacity enforcement | Atomic counters; reject connections when `relay + viewer > max_clients_per_room` |
+| Timestamp validation | `observed_at_ms` clamped to [server_now-60s, server_now+30s] |
+| Authorization | Room password only; no per-client roles yet |
 | Rate limiting | Room/client count caps only |
-| Input validation | Protobuf schema validation + timestamp sanity checks |
 
 ### Planned (v0.5+)
 
