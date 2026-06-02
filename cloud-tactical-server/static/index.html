@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WT 8111 Neo — C2 Console</title>
-<link rel="stylesheet" href="/css/style.css?v=4">
+<link rel="stylesheet" href="/css/style.css?v=5">
 </head>
 <body>
 
@@ -25,16 +25,12 @@
       <span>◷</span> 0 fps
     </div>
   </div>
-  <div class="topbar-controls">
-    <button id="btn-room" class="icon-btn" title="房间管理">◫</button>
-    <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
-  </div>
 </header>
 
 <div id="main-layout">
 
+  <!-- 左侧面板: 态势摘要 + 目标详情 + 列表 -->
   <aside id="left-sidebar">
-
     <section class="sidebar-panel">
       <div class="panel-header">Situation Summary</div>
       <div class="summary-grid">
@@ -75,6 +71,7 @@
     </section>
   </aside>
 
+  <!-- 中央地图 -->
   <main id="map-area">
     <canvas id="tactical-map"></canvas>
     <div id="map-loading" class="map-overlay">
@@ -88,76 +85,54 @@
     </div>
   </main>
 
-</div>
-
-<!-- Room Management Modal -->
-<div id="modal-room" class="modal" style="z-index:200">
-  <div class="modal-box room-manager">
-    <h2>Room Management</h2>
-
+  <!-- 右侧面板: 房间管理 (持久面板) -->
+  <aside id="right-panel">
     <!-- 服务端连接信息 -->
-    <div class="server-info">
-      <div class="server-info-item">
-        <span class="server-info-label">Server</span>
-        <span class="server-info-val" id="server-addr">—</span>
+    <section class="sidebar-panel">
+      <div class="panel-header">Server Info</div>
+      <div class="server-info-mini">
+        <div class="si-row"><span class="si-k">Address</span><span class="si-v" id="server-addr">—</span></div>
+        <div class="si-row"><span class="si-k">Relay</span><span class="si-v copyable" id="server-relay-tpl">ws://—</span></div>
+        <div class="si-row"><span class="si-k">Viewer</span><span class="si-v copyable" id="server-viewer-tpl">ws://—</span></div>
       </div>
-      <div class="server-info-item">
-        <span class="server-info-label">Relay URL</span>
-        <span class="server-info-val copyable" id="server-relay-tpl">ws://—</span>
-      </div>
-      <div class="server-info-item">
-        <span class="server-info-label">Viewer URL</span>
-        <span class="server-info-val copyable" id="server-viewer-tpl">ws://—</span>
-      </div>
-    </div>
+    </section>
 
     <!-- 创建房间 -->
-    <h3>Create Room</h3>
-    <div class="form-row">
-      <div class="form-group flex-1">
-        <label>Room ID</label>
-        <input type="text" id="room-id-input" placeholder="e.g. alpha-squad" maxlength="32">
+    <section class="sidebar-panel">
+      <div class="panel-header">Create Room</div>
+      <div class="create-room-form">
+        <input type="text" id="room-id-input" placeholder="Room ID" maxlength="32">
+        <input type="password" id="room-password-input" placeholder="Password (optional)">
+        <button id="btn-create-room" class="btn primary small full-width">Create</button>
       </div>
-      <div class="form-group flex-1">
-        <label>Password (optional)</label>
-        <input type="password" id="room-password-input" placeholder="no password">
-      </div>
-      <div class="form-group form-create-btn">
-        <button id="btn-create-room" class="btn primary">Create</button>
-      </div>
-    </div>
-    <div id="create-result" class="create-result" style="display:none"></div>
-
-    <hr>
+      <div id="create-result" class="create-result-mini" style="display:none"></div>
+    </section>
 
     <!-- 房间列表 -->
-    <div class="room-list-header">
-      <h3>Active Rooms</h3>
-      <button id="btn-refresh-rooms" class="btn small">Refresh</button>
-    </div>
-    <div id="room-list" class="room-list">
-      <span style="color:var(--muted)">Loading...</span>
-    </div>
+    <section class="sidebar-panel scrollable" style="flex:1;min-height:0">
+      <div class="panel-header">
+        Room List
+        <span class="count" id="room-list-count">0</span>
+        <button id="btn-refresh-rooms" class="icon-btn-mini" title="Refresh">↻</button>
+        <button id="btn-settings" class="icon-btn-mini" title="Settings">⚙</button>
+      </div>
+      <div id="room-list" class="room-list-panel">
+        <span style="color:var(--muted);font-size:0.78rem">Loading rooms...</span>
+      </div>
+    </section>
+  </aside>
 
-    <div class="btn-row" style="justify-content:flex-end">
-      <button id="btn-close-room-modal" class="btn">Close</button>
-    </div>
-  </div>
 </div>
 
 <!-- Settings Modal -->
 <div id="modal-settings" class="modal hidden">
   <div class="modal-box">
     <h2>Server Configuration</h2>
-    <div id="settings-content">
-      <span style="color:var(--muted)">Loading...</span>
-    </div>
-    <div class="btn-row">
-      <button id="btn-close-settings" class="btn">Close</button>
-    </div>
+    <div id="settings-content"><span style="color:var(--muted)">Loading...</span></div>
+    <div class="btn-row"><button id="btn-close-settings" class="btn">Close</button></div>
   </div>
 </div>
 
-<script src="/js/app.js?v=4"></script>
+<script src="/js/app.js?v=5"></script>
 </body>
 </html>

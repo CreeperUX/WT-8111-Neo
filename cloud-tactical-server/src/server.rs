@@ -1,12 +1,11 @@
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
@@ -194,11 +193,6 @@ async fn join_room(
 
 // ── WebSocket handlers ──
 
-#[derive(Deserialize)]
-struct ViewerQuery {
-    password: Option<String>,
-}
-
 async fn ws_relay(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
@@ -218,17 +212,10 @@ async fn ws_relay(
 async fn ws_viewer(
     State(state): State<Arc<AppState>>,
     Path(room_id): Path<String>,
-    Query(query): Query<ViewerQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
     let rooms = state.rooms.lock().await;
     let room = rooms.get_room(&room_id).ok_or(RoomError::RoomNotFound)?;
-
-    // Viewer password check via query parameter
-    let password = query.password.unwrap_or_default();
-    if !room.check_password(&password) {
-        return Err(RoomError::InvalidPassword.into());
-    }
 
     let max_per_room = state.config.max_clients_per_room;
     let client_id = uuid::Uuid::new_v4().to_string();
