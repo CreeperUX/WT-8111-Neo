@@ -7,3 +7,4 @@ wt-map-check.*
 src-tauri/target/
 src-tauri/gen/
 artifacts/
+WT8111Neo-Client/

@@ -82,10 +82,10 @@ Build the Web GUI, Rust service, and WinUI control console:
 npm.cmd run control:build
 ```
 
-The release control console is generated under:
+The release control console is synchronized to the top-level client folder:
 
 ```text
-src-winui/bin/x64/Release/net8.0-windows10.0.22621.0/win-x64/
+WT8111Neo-Client/
 ```
 
 That output directory should contain both:
@@ -94,6 +94,10 @@ That output directory should contain both:
 WT8111Neo.Control.exe
 wt-8111-neo.exe
 ```
+
+Use `WT8111Neo-Client/WT8111Neo.Control.exe` as the normal local client
+launcher. The deeper `src-winui/bin/...` build output remains an internal build
+artifact.
 
 ## Development Commands
 
