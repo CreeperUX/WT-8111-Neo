@@ -39,6 +39,7 @@ async fn main() {
     // 构建应用状态
     let state = AppState {
         rooms: Arc::new(Mutex::new(RoomManager::new(&config))),
+        config: config.clone(),
         start_time: std::time::Instant::now(),
     };
 

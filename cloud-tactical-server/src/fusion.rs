@@ -3,6 +3,18 @@ use std::time::{Duration, Instant};
 
 use crate::config::ServerConfig;
 
+// ── 融合参数 ──
+
+/// EMA 时间常数 (毫秒)
+/// total_age = τ 时, α = e^(-1) ≈ 0.37
+const FUSION_TAU_MS: f64 = 1000.0;
+
+/// 属性切换阈值: α 高于此值才允许覆盖 label_id / affiliation
+const ATTR_SWITCH_ALPHA: f64 = 0.6;
+
+/// source_count 统计窗口
+const SOURCE_WINDOW_SECS: f64 = 2.0;
+
 // ── 内部类型 ──
 
 #[derive(Debug, Clone)]
@@ -10,6 +22,13 @@ pub struct TrackPoint {
     pub x_u16: u32,
     pub y_u16: u32,
     pub at: Instant,
+}
+
+/// 记录某个 client 最近一次贡献此 track 的时间
+#[derive(Debug, Clone)]
+pub(crate) struct ClientContribution {
+    client_id: String,
+    last_seen: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -27,9 +46,11 @@ pub struct Track {
     pub source_count: u32,
     pub flags: u32,
     pub last_observed_at: Instant,
-    pub last_observed_at_ms: u64,   // 服务端等效时钟 (用于多端融合)
+    pub last_observed_at_ms: u64,   // 服务端 UNIX 毫秒 (用于多端融合)
+    pub total_age_ms: u32,          // 最近一次更新的总数据年龄
     pub history: VecDeque<TrackPoint>,
     pub created_at: Instant,
+    pub contributing_clients: Vec<ClientContribution>,
 
     // ROI 锚点：目标消失瞬间的位置和速度
     pub anchor_x_u16: u32,
@@ -43,7 +64,8 @@ pub struct ParsedObservation {
     pub client_id: String,
     pub player_name: Option<String>,
     pub seq: u64,
-    pub observed_at_ms: u64,
+    pub observed_at_ms: u64,        // 客户端 NTP 同步后的采样时刻 (服务端时间线)
+    pub measurement_age_ms: u32,    // 客户端自报: 8111 采样→打包的间隔
     pub map_generation: u32,
     pub player_x: u32,
     pub player_y: u32,
@@ -121,6 +143,10 @@ impl FusionEngine {
 
         for obs in &observations {
             for obj in &obs.objects {
+                // ── 计算 total_age_ms ──
+                let transit_ms = now_ms.saturating_sub(obs.observed_at_ms) as u32;
+                let total_age_ms = transit_ms.saturating_add(obs.measurement_age_ms);
+
                 let fingerprint = TrackFingerprint {
                     affiliation: obj.affiliation,
                     class_id: obj.class_id,
@@ -130,11 +156,32 @@ impl FusionEngine {
                 };
 
                 if let Some(track_id) = self.match_track(&fingerprint) {
-                    self.update_track(&track_id, obj, now, obs.observed_at_ms);
+                    self.update_track(
+                        &track_id,
+                        obj,
+                        &obs.client_id,
+                        now,
+                        now_ms,
+                        total_age_ms,
+                    );
                 } else {
-                    let _ = self.create_track(obj, now, obs.observed_at_ms);
+                    let _ = self.create_track(
+                        obj,
+                        &obs.client_id,
+                        now,
+                        now_ms,
+                        total_age_ms,
+                    );
                 }
             }
+        }
+
+        // 清理 source_count 过期记录
+        let cutoff = now - Duration::from_secs_f64(SOURCE_WINDOW_SECS);
+        for track in self.tracks.values_mut() {
+            track
+                .contributing_clients
+                .retain(|c| c.last_seen >= cutoff);
         }
 
         // 生成 ROI（基于 last_observed_at_ms）
@@ -159,6 +206,8 @@ impl FusionEngine {
             rois,
         }
     }
+
+    // ── 关联 ──
 
     fn match_track(&self, fingerprint: &TrackFingerprint) -> Option<String> {
         // Level 1: 精确 (affiliation + class + label) + 距离
@@ -195,9 +244,21 @@ impl FusionEngine {
         best_id
     }
 
-    fn create_track(&mut self, obj: &ParsedObject, now: Instant, observed_at_ms: u64) -> String {
+    // ── 创建新 track ──
+
+    fn create_track(
+        &mut self,
+        obj: &ParsedObject,
+        client_id: &str,
+        now: Instant,
+        now_ms: u64,
+        total_age_ms: u32,
+    ) -> String {
         let id = format!("trk_{:08x}", self.track_counter);
         self.track_counter += 1;
+
+        let alpha = compute_alpha(total_age_ms);
+        let initial_conf = (alpha * 255.0) as u32;
 
         let mut history = VecDeque::new();
         history.push_back(TrackPoint {
@@ -218,13 +279,18 @@ impl FusionEngine {
                 heading_i16: obj.heading_i16,
                 vx_i16: 0,
                 vy_i16: 0,
-                confidence_u8: 255,
+                confidence_u8: initial_conf.max(1),
                 source_count: 1,
                 flags: obj.flags,
                 last_observed_at: now,
-                last_observed_at_ms: observed_at_ms,
+                last_observed_at_ms: now_ms,
+                total_age_ms,
                 history,
                 created_at: now,
+                contributing_clients: vec![ClientContribution {
+                    client_id: client_id.to_string(),
+                    last_seen: now,
+                }],
                 anchor_x_u16: obj.x_u16,
                 anchor_y_u16: obj.y_u16,
                 anchor_vx_i16: 0,
@@ -235,41 +301,93 @@ impl FusionEngine {
         id
     }
 
-    fn update_track(&mut self, track_id: &str, obj: &ParsedObject, now: Instant, observed_at_ms: u64) {
+    // ── EMA 加权更新 ──
+
+    fn update_track(
+        &mut self,
+        track_id: &str,
+        obj: &ParsedObject,
+        client_id: &str,
+        now: Instant,
+        now_ms: u64,
+        total_age_ms: u32,
+    ) {
         let Some(track) = self.tracks.get_mut(track_id) else {
             return;
         };
 
-        // 速度估算
+        // ── 1. 计算 EMA 权重 ──
+        let alpha = compute_alpha(total_age_ms);
+
+        // ── 2. 速度估算 (基于历史, 不考虑 alpha) ──
         if let Some(last) = track.history.back() {
             let dt = now.duration_since(last.at).as_secs_f64().max(0.1);
-            track.vx_i16 = ((obj.x_u16 as f64 - last.x_u16 as f64) / dt) as i32;
-            track.vy_i16 = ((obj.y_u16 as f64 - last.y_u16 as f64) / dt) as i32;
+            let raw_vx = (obj.x_u16 as f64 - last.x_u16 as f64) / dt;
+            let raw_vy = (obj.y_u16 as f64 - last.y_u16 as f64) / dt;
+            // 速度也用 EMA 平滑
+            track.vx_i16 = (alpha * raw_vx + (1.0 - alpha) * track.vx_i16 as f64) as i32;
+            track.vy_i16 = (alpha * raw_vy + (1.0 - alpha) * track.vy_i16 as f64) as i32;
         }
 
-        track.x_u16 = obj.x_u16;
-        track.y_u16 = obj.y_u16;
-        track.heading_i16 = obj.heading_i16;
+        // ── 3. 位置 EMA 融合 ──
+        track.x_u16 = (alpha * obj.x_u16 as f64 + (1.0 - alpha) * track.x_u16 as f64) as u32;
+        track.y_u16 = (alpha * obj.y_u16 as f64 + (1.0 - alpha) * track.y_u16 as f64) as u32;
+
+        // ── 4. 朝向 EMA ──
+        if obj.heading_i16 != 0 {
+            track.heading_i16 =
+                (alpha * obj.heading_i16 as f64 + (1.0 - alpha) * track.heading_i16 as f64) as i32;
+        }
+
+        // ── 5. 属性仲裁: 仅高 α 时覆盖 ──
+        if alpha > ATTR_SWITCH_ALPHA {
+            track.label_id = obj.label_id;
+            track.affiliation = obj.affiliation;
+        }
+
+        // ── 6. 置信度 EMA 累积 ──
+        let raw_conf = alpha * 255.0 + (1.0 - alpha) * track.confidence_u8 as f64;
+        track.confidence_u8 = (raw_conf as u32).min(255);
+
+        // ── 7. 标志位 ──
         track.flags = obj.flags;
         track.last_observed_at = now;
-        track.last_observed_at_ms = observed_at_ms;
-        track.confidence_u8 = 255;
+        track.last_observed_at_ms = now_ms;
+        track.total_age_ms = total_age_ms;
 
-        // 冻结锚点：记录最新观测时的位置和速度
+        // ── 8. 来源追踪 (去重) ──
+        let cutoff = now - Duration::from_secs_f64(SOURCE_WINDOW_SECS);
+        track.contributing_clients.retain(|c| c.last_seen >= cutoff);
+
+        if let Some(existing) = track
+            .contributing_clients
+            .iter_mut()
+            .find(|c| c.client_id == client_id)
+        {
+            existing.last_seen = now;
+        } else {
+            track.contributing_clients.push(ClientContribution {
+                client_id: client_id.to_string(),
+                last_seen: now,
+            });
+        }
+        track.source_count = track.contributing_clients.len() as u32;
+
+        // ── 9. ROI 锚点更新 ──
         track.anchor_x_u16 = obj.x_u16;
         track.anchor_y_u16 = obj.y_u16;
         track.anchor_vx_i16 = track.vx_i16;
         track.anchor_vy_i16 = track.vy_i16;
 
+        // ── 10. 历史 ──
         track.history.push_back(TrackPoint {
             x_u16: obj.x_u16,
             y_u16: obj.y_u16,
             at: now,
         });
 
-        // 只保留最近 3 秒
-        let cutoff = now - Duration::from_secs_f64(self.config.track_history_secs);
-        while track.history.front().map_or(false, |p| p.at < cutoff) {
+        let history_cutoff = now - Duration::from_secs_f64(self.config.track_history_secs);
+        while track.history.front().map_or(false, |p| p.at < history_cutoff) {
             track.history.pop_front();
         }
     }
@@ -321,10 +439,9 @@ impl FusionEngine {
             };
 
             // ── 半长轴 (沿运动方向，增长快) ──
-            // base + speed_factor * elapsed + growth_rate * elapsed
             let base_radius = 200u32;
-            let speed_bonus = (speed * elapsed * 800.0) as u32; // 速度越快，前向越长
-            let time_growth = (elapsed * 300.0) as u32; // 基础时间增长
+            let speed_bonus = (speed * elapsed * 800.0) as u32;
+            let time_growth = (elapsed * 300.0) as u32;
             let radius_major = (base_radius + speed_bonus + time_growth).min(5000);
 
             // ── 半短轴 (垂直于运动方向，增长慢) ──
@@ -357,6 +474,8 @@ impl FusionEngine {
     }
 }
 
+// ── 辅助 ──
+
 struct TrackFingerprint {
     affiliation: u32,
     class_id: u32,
@@ -369,4 +488,9 @@ fn spatial_dist(x1: u32, y1: u32, x2: u32, y2: u32) -> u32 {
     let dx = x1 as i64 - x2 as i64;
     let dy = y1 as i64 - y2 as i64;
     ((dx * dx + dy * dy) as f64).sqrt() as u32
+}
+
+/// 计算 EMA 权重 α = exp(-total_age_ms / τ)
+fn compute_alpha(total_age_ms: u32) -> f64 {
+    (-(total_age_ms as f64) / FUSION_TAU_MS).exp().clamp(0.0, 1.0)
 }

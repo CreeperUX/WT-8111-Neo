@@ -9,11 +9,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::fs::ServeDir;
 
+use crate::config::ServerConfig;
 use crate::rooms::{RoomError, RoomManager};
 
 pub struct AppState {
     pub rooms: Arc<Mutex<RoomManager>>,
+    pub config: ServerConfig,
     pub start_time: std::time::Instant,
 }
 
@@ -26,8 +29,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/rooms", get(list_rooms).post(create_room))
         .route("/api/rooms/{room_id}", get(get_room))
         .route("/api/rooms/{room_id}/join", post(join_room))
+        .route("/api/config", get(get_config))
         .route("/ws/rooms/{room_id}/relay", get(ws_relay))
         .route("/ws/rooms/{room_id}/viewer", get(ws_viewer))
+        .fallback_service(ServeDir::new("static"))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -54,6 +59,16 @@ async fn version() -> Json<serde_json::Value> {
         "service": "cloud-tactical-server",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol_version": 1,
+    }))
+}
+
+async fn get_config(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "fusion_interval_ms": state.config.fusion_interval_ms,
+        "track_history_secs": state.config.track_history_secs,
+        "roi_ttl_secs": state.config.roi_ttl_secs,
+        "max_rooms": state.config.max_rooms,
+        "max_clients_per_room": state.config.max_clients_per_room,
     }))
 }
 

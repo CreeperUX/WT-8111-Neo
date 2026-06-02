@@ -26,8 +26,10 @@ message FusedTrack {
   int32 vy_i16 = 9;             // Y 方向速度 (可选, 量化)
   uint32 confidence_u8 = 10;    // 置信度 0..255
   uint32 last_seen_ms_ago = 11; // 最近被观测到距今毫秒
-  uint32 source_count = 12;     // 观测来源数
+  uint32 source_count = 12;     // 观测来源数 (不同 client 数量)
   uint32 flags = 13;            // 标志位
+  uint32 total_age_ms = 14;     // 最近一次更新的总数据年龄 (测量延迟+传输延迟)
+  uint32 contributing_clients = 15; // 最近 2 秒内贡献过此 track 的 client 数
 }
 
 // 目标消失后的兴趣区域

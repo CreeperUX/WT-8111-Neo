@@ -25,7 +25,7 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --home /app --shell /sbin/nologin wt8111
@@ -34,6 +34,7 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/cloud-tactical-server /app/
 COPY config/server.example.yaml /app/config/server.yaml
+COPY static/ /app/static/
 
 RUN chown -R wt8111:wt8111 /app
 
@@ -42,6 +43,6 @@ USER wt8111
 EXPOSE 17712
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD /app/cloud-tactical-server healthcheck || exit 1
+    CMD curl -sf http://localhost:17712/healthz || exit 1
 
 ENTRYPOINT ["/app/cloud-tactical-server"]

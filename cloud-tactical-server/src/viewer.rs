@@ -61,23 +61,32 @@ pub async fn handle_viewer(
 }
 
 fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
+    let now_ms = unix_ms();
+
     let tracks: Vec<FusedTrack> = result
         .tracks
         .iter()
-        .map(|t| FusedTrack {
-            track_id: t.track_id.clone(),
-            label_id: t.label_id,
-            class_id: t.class_id,
-            affiliation: t.affiliation,
-            x_u16: t.x_u16,
-            y_u16: t.y_u16,
-            heading_i16: t.heading_i16,
-            vx_i16: t.vx_i16,
-            vy_i16: t.vy_i16,
-            confidence_u8: t.confidence_u8,
-            last_seen_ms_ago: 0,
-            source_count: t.source_count,
-            flags: t.flags,
+        .map(|t| {
+            let last_seen_ms_ago =
+                now_ms.saturating_sub(t.last_observed_at_ms) as u32;
+
+            FusedTrack {
+                track_id: t.track_id.clone(),
+                label_id: t.label_id,
+                class_id: t.class_id,
+                affiliation: t.affiliation,
+                x_u16: t.x_u16,
+                y_u16: t.y_u16,
+                heading_i16: t.heading_i16,
+                vx_i16: t.vx_i16,
+                vy_i16: t.vy_i16,
+                confidence_u8: t.confidence_u8,
+                last_seen_ms_ago,
+                source_count: t.source_count,
+                flags: t.flags,
+                total_age_ms: t.total_age_ms,
+                contributing_clients: t.contributing_clients.len() as u32,
+            }
         })
         .collect();
 
@@ -102,7 +111,7 @@ fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
         protocol_version: 1,
         room_id: room_id.to_string(),
         seq: 0,
-        server_time_ms: unix_ms(),
+        server_time_ms: now_ms,
         map_generation: 0,
         tracks,
         interest_regions: rois,

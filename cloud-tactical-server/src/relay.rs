@@ -134,6 +134,7 @@ fn parse_observation(frame: ObservationFrame, client_id: &str) -> ParsedObservat
         },
         seq: frame.seq,
         observed_at_ms: frame.observed_at_ms,
+        measurement_age_ms: frame.measurement_age_ms,
         map_generation: frame.map_generation,
         player_x: frame.player.map_or(0, |p| p.x_u16),
         player_y: frame.player.map_or(0, |p| p.y_u16),

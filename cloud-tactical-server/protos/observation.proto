@@ -16,6 +16,7 @@ message ObservationFrame {
   ObservedPlayer player = 10;     // 玩家自身数据
   repeated ObservedObject objects = 11;   // 观测目标数组
   repeated uint32 removed_local_ids = 12; // 本 tick 消失的 localId
+  uint32 measurement_age_ms = 13;  // 客户端自报: 从 8111 采到数据到打包发送间隔了多久 (毫秒)
 }
 
 message ObservedPlayer {
