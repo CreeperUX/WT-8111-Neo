@@ -9,16 +9,26 @@ import {
   MapPinned,
   MoreHorizontal,
   MousePointer2,
+  Plane,
   RadioTower,
   RotateCcw,
   Ruler,
+  Shield,
   Target,
   Waypoints,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useCloudTacticalViewer } from "./hooks/useCloudTacticalViewer";
 import { useWT8111Map } from "./hooks/useWT8111Map";
+import {
+  cloudSnapshotToMapObjects,
+  normalizeCloudInterestRegions,
+  type CloudFusedSnapshot,
+  type CloudInterestOverlay,
+  type CloudViewerStatus
+} from "./lib/cloudTactical";
 import {
   bearingBetween,
   distanceBetween,
@@ -46,6 +56,7 @@ type FirePointRef =
       type?: string;
       label: string;
       colorSignature?: string;
+      cloudTrackId?: string;
       initialX?: number;
       initialY?: number;
       lastX?: number;
@@ -61,34 +72,6 @@ interface FirePoint {
   color: string;
   objectIndex?: number;
   objectKey?: string;
-}
-
-interface TrackSample {
-  x: number;
-  y: number;
-  at: number;
-}
-
-interface TargetObservation {
-  fingerprint: string;
-  label: string;
-  x: number;
-  y: number;
-  objectKey: string;
-  color: string;
-}
-
-interface HostileTrack {
-  id: string;
-  fingerprint: string;
-  label: string;
-  color: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
-  objectKey?: string;
-  samples: TrackSample[];
-  velocityX: number;
-  velocityY: number;
 }
 
 interface MapView {
@@ -121,7 +104,9 @@ type MapSelection =
     };
 
 type Affiliation = "friend" | "hostile" | "neutral" | "unknown";
+type WorkbenchMode = "ground" | "air";
 type SymbolKind =
+  | "aircraft"
   | "armor"
   | "airDefense"
   | "artillery"
@@ -175,8 +160,6 @@ const affiliationTheme: Record<
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
-const HOSTILE_TRACK_HISTORY_MS = 3000;
-const HOSTILE_ROI_RETENTION_MS = 15000;
 const EMPTY_MAP_OBJECTS: WTMapObject[] = [];
 const GRID_LINES = Array.from({ length: 9 }, (_, index) => index / 8);
 
@@ -245,6 +228,31 @@ function formatNumber(value: number | undefined, digits = 0) {
   return value.toFixed(digits);
 }
 
+function formatCloudStatus(status: CloudViewerStatus) {
+  switch (status) {
+    case "disabled":
+      return "Cloud Off";
+    case "joining":
+      return "Joining";
+    case "connecting":
+      return "Connecting";
+    case "connected":
+      return "Connected";
+    case "reconnecting":
+      return "Reconnecting";
+    case "error":
+      return "Error";
+    default:
+      return status;
+  }
+}
+
+function formatTrackConfidence(object: WTMapObject) {
+  return typeof object.cloudConfidenceU8 === "number"
+    ? `${Math.round((object.cloudConfidenceU8 / 255) * 100)}%`
+    : "--";
+}
+
 function formatWorldPoint(
   marker: Pick<WTMapObject, "x" | "y"> | Pick<MapMarker, "x" | "y"> | undefined,
   mapInfo?: WTMapInfo
@@ -266,10 +274,18 @@ function objectColor(object: WTMapObject) {
 }
 
 function objectLabel(object: WTMapObject) {
+  if (typeof object.cloudLabel === "string" && object.cloudLabel) {
+    return object.cloudLabel;
+  }
+
   return object.icon ?? object.type ?? "object";
 }
 
 function objectColorSignature(object: WTMapObject) {
+  if (typeof object.cloudTrackId === "string" && object.cloudTrackId) {
+    return object.cloudTrackId;
+  }
+
   const rgb = object["color[]"];
   if (rgb) {
     return rgb.join(",");
@@ -279,20 +295,15 @@ function objectColorSignature(object: WTMapObject) {
 }
 
 function objectKey(object: WTMapObject, index: number) {
+  if (typeof object.cloudTrackId === "string" && object.cloudTrackId) {
+    return `cloud:${object.cloudTrackId}`;
+  }
+
   return [index, object.icon ?? "", object.type ?? ""].join(":");
 }
 
 function objectVisibilityKey(object: WTMapObject, index: number) {
   return objectKey(object, index);
-}
-
-function targetFingerprint(object: WTMapObject) {
-  return [
-    inferAffiliation(object),
-    objectLabel(object).toLowerCase(),
-    objectColorSignature(object),
-    classifyObject(object)
-  ].join("|");
 }
 
 function markerRef(marker: MapMarker): FirePointRef {
@@ -311,6 +322,7 @@ function objectRef(
     type: object.type,
     label: objectLabel(object),
     colorSignature: objectColorSignature(object),
+    cloudTrackId: typeof object.cloudTrackId === "string" ? object.cloudTrackId : undefined,
     initialX: previous?.initialX ?? object.x,
     initialY: previous?.initialY ?? object.y,
     lastX: object.x,
@@ -333,6 +345,7 @@ function firePointRefKey(ref?: FirePointRef) {
 
   return [
     "object",
+    ref.cloudTrackId ?? "",
     ref.objectIndex,
     ref.icon ?? "",
     ref.type ?? "",
@@ -357,6 +370,15 @@ function shortFirePointLabel(label: string) {
 }
 
 function inferAffiliation(object: WTMapObject): Affiliation {
+  if (
+    object.cloudAffiliation === "friend" ||
+    object.cloudAffiliation === "hostile" ||
+    object.cloudAffiliation === "neutral" ||
+    object.cloudAffiliation === "unknown"
+  ) {
+    return object.cloudAffiliation;
+  }
+
   if (object.icon === "Player") {
     return "friend";
   }
@@ -386,6 +408,22 @@ function inferAffiliation(object: WTMapObject): Affiliation {
 }
 
 function inferSymbolKind(object: WTMapObject): SymbolKind {
+  if (object.cloudClassId === 0) {
+    return "aircraft";
+  }
+
+  if (object.cloudClassId === 1) {
+    return "armor";
+  }
+
+  if (object.cloudClassId === 2) {
+    return "objective";
+  }
+
+  if (object.cloudClassId === 3) {
+    return "respawn";
+  }
+
   const icon = (object.icon ?? "").toLowerCase();
   const type = (object.type ?? "").toLowerCase();
   const text = `${icon} ${type}`;
@@ -396,6 +434,17 @@ function inferSymbolKind(object: WTMapObject): SymbolKind {
 
   if (text.includes("airdefence") || text.includes("airdefense") || text.includes("spaa")) {
     return "airDefense";
+  }
+
+  if (
+    text.includes("aircraft") ||
+    text.includes("fighter") ||
+    text.includes("bomber") ||
+    text.includes("helicopter") ||
+    text.includes("plane") ||
+    text.includes("drone")
+  ) {
+    return "aircraft";
   }
 
   if (text.includes("artillery") || text.includes("howitzer") || text.includes("mortar")) {
@@ -435,6 +484,22 @@ function isPointOfInterestObject(object: WTMapObject) {
 }
 
 function classifyObject(object: WTMapObject): Exclude<ObjectFilter, "all"> {
+  if (object.cloudClassId === 0) {
+    return "air";
+  }
+
+  if (object.cloudClassId === 1) {
+    return "ground";
+  }
+
+  if (object.cloudClassId === 2) {
+    return "objective";
+  }
+
+  if (object.cloudClassId === 3) {
+    return "spawn";
+  }
+
   const icon = (object.icon ?? "").toLowerCase();
   const type = (object.type ?? "").toLowerCase();
   const text = `${icon} ${type}`;
@@ -456,7 +521,10 @@ function classifyObject(object: WTMapObject): Exclude<ObjectFilter, "all"> {
   if (
     text.includes("aircraft") ||
     text.includes("fighter") ||
-    text.includes("bomber")
+    text.includes("bomber") ||
+    text.includes("helicopter") ||
+    text.includes("plane") ||
+    text.includes("drone")
   ) {
     return "air";
   }
@@ -541,150 +609,14 @@ function sortObjectsByTacticalPriority(
     });
 }
 
-function collectHostileObservations(objects: WTMapObject[]): TargetObservation[] {
-  return objects
-    .map((object, index) => ({ object, index }))
-    .filter(({ object }) => inferAffiliation(object) === "hostile" && hasMapPoint(object))
-    .map(({ object, index }) => ({
-      fingerprint: targetFingerprint(object),
-      label: objectLabel(object),
-      x: object.x ?? 0,
-      y: object.y ?? 0,
-      objectKey: objectVisibilityKey(object, index),
-      color: objectColor(object)
-    }));
-}
-
-function predictTrackPoint(track: HostileTrack, at: number): TrackSample {
-  const last = track.samples[track.samples.length - 1];
-  if (!last) {
-    return { x: 0, y: 0, at };
-  }
-
-  const elapsedSeconds = Math.max(0, (at - track.lastSeenAt) / 1000);
-  return {
-    x: clamp(last.x + track.velocityX * elapsedSeconds, 0, 1),
-    y: clamp(last.y + track.velocityY * elapsedSeconds, 0, 1),
-    at
-  };
-}
-
-function deriveVelocity(samples: TrackSample[], fallback: Pick<HostileTrack, "velocityX" | "velocityY">) {
-  const last = samples[samples.length - 1];
-  const first = samples.find((sample) => last && last.at - sample.at >= 250) ?? samples[0];
-  if (!first || !last || first.at === last.at) {
-    return fallback;
-  }
-
-  const elapsedSeconds = (last.at - first.at) / 1000;
-  return {
-    velocityX: (last.x - first.x) / elapsedSeconds,
-    velocityY: (last.y - first.y) / elapsedSeconds
-  };
-}
-
-function appendTrackSample(track: HostileTrack, observation: TargetObservation, observedAt: number): HostileTrack {
-  const sample = { x: observation.x, y: observation.y, at: observedAt };
-  const previousSamples =
-    track.samples[track.samples.length - 1]?.at === observedAt
-      ? track.samples.slice(0, -1)
-      : track.samples;
-  const samples = [...previousSamples, sample].filter(
-    (item) => observedAt - item.at <= HOSTILE_TRACK_HISTORY_MS
-  );
-  const velocity = deriveVelocity(samples, track);
-
-  return {
-    ...track,
-    fingerprint: observation.fingerprint,
-    label: observation.label,
-    color: observation.color,
-    lastSeenAt: observedAt,
-    objectKey: observation.objectKey,
-    samples,
-    velocityX: velocity.velocityX,
-    velocityY: velocity.velocityY
-  };
-}
-
-function createHostileTrack(observation: TargetObservation, observedAt: number, ordinal: number): HostileTrack {
-  return {
-    id: `${observation.fingerprint}:${observedAt}:${ordinal}`,
-    fingerprint: observation.fingerprint,
-    label: observation.label,
-    color: observation.color,
-    firstSeenAt: observedAt,
-    lastSeenAt: observedAt,
-    objectKey: observation.objectKey,
-    samples: [{ x: observation.x, y: observation.y, at: observedAt }],
-    velocityX: 0,
-    velocityY: 0
-  };
-}
-
-function matchHostileTrack(
-  observation: TargetObservation,
-  tracks: HostileTrack[],
-  usedTrackIds: Set<string>,
-  observedAt: number
-) {
-  const candidates = tracks
-    .filter((track) => track.fingerprint === observation.fingerprint && !usedTrackIds.has(track.id))
-    .map((track) => {
-      const predicted = predictTrackPoint(track, observedAt);
-      const distance = Math.hypot(observation.x - predicted.x, observation.y - predicted.y);
-      const elapsedSeconds = Math.max(0, (observedAt - track.lastSeenAt) / 1000);
-      const speed = Math.hypot(track.velocityX, track.velocityY);
-      const gate = 0.025 + Math.min(0.06, speed * elapsedSeconds * 1.8);
-
-      return { track, distance, gate };
-    })
-    .filter(({ distance, gate }) => distance <= gate)
-    .sort((left, right) => left.distance - right.distance);
-
-  return candidates[0]?.track;
-}
-
-function updateHostileTracks(
-  previousTracks: HostileTrack[],
-  objects: WTMapObject[],
-  observedAt: number
-): HostileTrack[] {
-  const observations = collectHostileObservations(objects);
-  const usedTrackIds = new Set<string>();
-  const nextTracks = new Map<string, HostileTrack>();
-
-  observations.forEach((observation, index) => {
-    const match = matchHostileTrack(observation, previousTracks, usedTrackIds, observedAt);
-    if (match) {
-      usedTrackIds.add(match.id);
-      nextTracks.set(match.id, appendTrackSample(match, observation, observedAt));
-      return;
-    }
-
-    const created = createHostileTrack(observation, observedAt, index);
-    usedTrackIds.add(created.id);
-    nextTracks.set(created.id, created);
-  });
-
-  previousTracks.forEach((track) => {
-    if (usedTrackIds.has(track.id) || observedAt - track.lastSeenAt > HOSTILE_ROI_RETENTION_MS) {
-      return;
-    }
-
-    nextTracks.set(track.id, {
-      ...track,
-      samples: track.samples.filter((sample) => observedAt - sample.at <= HOSTILE_TRACK_HISTORY_MS)
-    });
-  });
-
-  return Array.from(nextTracks.values());
-}
-
 function objectMatchesRefSignature(
   ref: Extract<FirePointRef, { kind: "object" }>,
   object: WTMapObject
 ) {
+  if (ref.cloudTrackId || typeof object.cloudTrackId === "string") {
+    return ref.cloudTrackId === object.cloudTrackId && hasMapPoint(object);
+  }
+
   if (object.icon !== ref.icon || object.type !== ref.type || !hasMapPoint(object)) {
     return false;
   }
@@ -963,6 +895,15 @@ function NatoIcon({
     );
   }
 
+  if (kind === "aircraft") {
+    return (
+      <g {...iconProps} transform={`rotate(${heading})`}>
+        <path d={`M 0 ${-height * 0.34} L ${width * 0.2} ${height * 0.2} L 0 ${height * 0.08} L ${-width * 0.2} ${height * 0.2} Z`} />
+        <line x1="0" y1={height * 0.08} x2="0" y2={height * 0.32} />
+      </g>
+    );
+  }
+
   if (kind === "artillery") {
     return (
       <circle
@@ -1085,94 +1026,62 @@ const NatoMapSymbol = memo(function NatoMapSymbol({
   );
 });
 
-const HostileTrackOverlay = memo(function HostileTrackOverlay({
-  track,
-  view,
-  now
+const CloudInterestRegionOverlay = memo(function CloudInterestRegionOverlay({
+  region,
+  view
 }: {
-  track: HostileTrack;
+  region: CloudInterestOverlay;
   view: MapView;
-  now: number;
 }) {
-  const visibleSamples = track.samples
-    .filter((sample) => now - sample.at <= HOSTILE_TRACK_HISTORY_MS)
-    .flatMap((sample) => {
-      const screen = mapToScreenPoint(sample, view);
-      return screen ? [{ ...sample, screen }] : [];
-    });
-  const lastSample = track.samples[track.samples.length - 1];
-  const isObserved = now - track.lastSeenAt <= 650;
+  const center = mapToScreenPoint(region.center, view);
+  const anchor = mapToScreenPoint(region.anchor, view);
 
-  if (!lastSample) {
+  if (!center) {
     return null;
   }
 
-  if (isObserved) {
-    const points = visibleSamples.map((sample) => `${sample.screen.x},${sample.screen.y}`).join(" ");
-    return (
-      <g className="hostile-track-layer" aria-label={`${track.label} hostile track`}>
-        {visibleSamples.length > 1 && (
-          <polyline className="hostile-track-line" points={points} vectorEffect="non-scaling-stroke" />
-        )}
-        {visibleSamples.map((sample, index) => (
-          <circle
-            key={`${track.id}-sample-${sample.at}-${index}`}
-            cx={sample.screen.x}
-            cy={sample.screen.y}
-            r={index === visibleSamples.length - 1 ? "0.0042" : "0.0028"}
-            className="hostile-track-dot"
-            opacity={clamp(1 - (now - sample.at) / HOSTILE_TRACK_HISTORY_MS, 0.25, 1)}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </g>
-    );
-  }
-
-  const predicted = predictTrackPoint(track, now);
-  const predictedScreen = mapToScreenPoint(predicted, view);
-  const lastScreen = mapToScreenPoint(lastSample, view);
-  if (!predictedScreen) {
-    return null;
-  }
-
-  const lostMs = now - track.lastSeenAt;
-  const retentionRatio = clamp(lostMs / HOSTILE_ROI_RETENTION_MS, 0, 1);
-  const uncertaintyRadius = 0.018 + retentionRatio * 0.045;
-  const opacity = clamp(1 - retentionRatio, 0.18, 0.78);
+  const opacity = clamp(region.confidenceU8 / 255, 0.18, 0.76);
+  const radiusX = Math.max(region.radiusMajor * view.zoom, 0.012);
+  const radiusY = Math.max(region.radiusMinor * view.zoom, 0.008);
 
   return (
-    <g className="hostile-roi-layer" opacity={opacity} aria-label={`${track.label} predicted interest area`}>
-      {lastScreen && (
+    <g
+      className="cloud-roi-layer"
+      opacity={opacity}
+      aria-label={`${region.trackId} server interest region`}
+    >
+      {anchor && (
         <line
-          x1={lastScreen.x}
-          y1={lastScreen.y}
-          x2={predictedScreen.x}
-          y2={predictedScreen.y}
-          className="hostile-prediction-line"
+          x1={anchor.x}
+          y1={anchor.y}
+          x2={center.x}
+          y2={center.y}
+          className="cloud-roi-anchor"
           vectorEffect="non-scaling-stroke"
         />
       )}
-      <circle
-        cx={predictedScreen.x}
-        cy={predictedScreen.y}
-        r={uncertaintyRadius}
-        className="hostile-roi-ring"
+      <ellipse
+        cx={center.x}
+        cy={center.y}
+        rx={radiusX}
+        ry={radiusY}
+        className="cloud-roi-ellipse"
+        transform={`rotate(${region.headingDeg - 90} ${center.x} ${center.y})`}
         vectorEffect="non-scaling-stroke"
       />
       <circle
-        cx={predictedScreen.x}
-        cy={predictedScreen.y}
+        cx={center.x}
+        cy={center.y}
         r="0.004"
-        className="hostile-roi-center"
+        className="cloud-roi-center"
         vectorEffect="non-scaling-stroke"
       />
       <text
-        x={predictedScreen.x}
-        y={predictedScreen.y + uncertaintyRadius + 0.018}
-        className="hostile-roi-label"
+        x={center.x}
+        y={center.y + radiusY + 0.018}
+        className="cloud-roi-label"
       >
-        ROI {Math.max(0, Math.ceil((HOSTILE_ROI_RETENTION_MS - lostMs) / 1000))}s
+        ROI {Math.max(0, Math.ceil(region.expiresInMs / 1000))}s
       </text>
     </g>
   );
@@ -1181,8 +1090,8 @@ const HostileTrackOverlay = memo(function HostileTrackOverlay({
 function MapSurface({
   mapInfo,
   objects,
-  hostileTracks,
-  trackNow,
+  interestRegions,
+  trackSource,
   markers,
   activeMarker,
   sourcePoint,
@@ -1194,8 +1103,8 @@ function MapSurface({
 }: {
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
-  hostileTracks: HostileTrack[];
-  trackNow: number;
+  interestRegions: CloudInterestOverlay[];
+  trackSource: "cloud" | "local";
   markers: MapMarker[];
   activeMarker?: MapMarker;
   sourcePoint?: FirePoint;
@@ -1348,6 +1257,7 @@ function MapSurface({
           <span>{mapInfo?.valid ? "MAP VALID" : "MAP WAIT"}</span>
           <span>GEN {mapInfo?.map_generation ?? "--"}</span>
           <span>{objects.length} OBJ</span>
+          <span>{trackSource === "cloud" ? "CLOUD SNAPSHOT" : "LOCAL 8111"}</span>
         </div>
         <div className="zoom-controls" aria-label="Map zoom controls">
           <button
@@ -1408,8 +1318,8 @@ function MapSurface({
           </svg>
         </div>
         <svg className="symbol-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-          {hostileTracks.map((track) => (
-            <HostileTrackOverlay key={track.id} track={track} view={view} now={trackNow} />
+          {interestRegions.map((region) => (
+            <CloudInterestRegionOverlay key={region.trackId} region={region} view={view} />
           ))}
 
           {visibleObjects.map(({ object, index, key }) => (
@@ -1871,8 +1781,181 @@ function ToolPanel({
   );
 }
 
+function AirTacticalPanel({
+  mapInfo,
+  objects,
+  cloudSnapshot,
+  cloudStatus,
+  cloudError,
+  cloudUpdatedAt,
+  cloudEnabled,
+  hiddenObjectKeys,
+  toggleObjectVisibility
+}: {
+  mapInfo?: WTMapInfo;
+  objects: WTMapObject[];
+  cloudSnapshot?: CloudFusedSnapshot;
+  cloudStatus: CloudViewerStatus;
+  cloudError?: string;
+  cloudUpdatedAt: number;
+  cloudEnabled: boolean;
+  hiddenObjectKeys: Set<string>;
+  toggleObjectVisibility: (key: string) => void;
+}) {
+  const player = useMemo(() => findPlayer(objects), [objects]);
+  const airObjects = useMemo(
+    () =>
+      sortObjectsByTacticalPriority(
+        objects,
+        mapInfo,
+        player
+          ? {
+              ref: { kind: "player" },
+              label: "Player",
+              x: player.x ?? 0,
+              y: player.y ?? 0,
+              color: objectColor(player)
+            }
+          : undefined
+      ).filter(({ object }) => classifyObject(object) === "air"),
+    [objects, mapInfo, player]
+  );
+  const hostileAir = useMemo(
+    () => airObjects.filter(({ object }) => inferAffiliation(object) === "hostile"),
+    [airObjects]
+  );
+  const friendlyAir = useMemo(
+    () => airObjects.filter(({ object }) => inferAffiliation(object) === "friend"),
+    [airObjects]
+  );
+  const nearestHostile = hostileAir[0];
+  const nearestHostileRange =
+    player && nearestHostile
+      ? distanceBetween(player, nearestHostile.object, mapInfo)
+      : undefined;
+  const nearestHostileBearing =
+    player && nearestHostile ? bearingBetween(player, nearestHostile.object) : undefined;
+  const cloudSummary = cloudSnapshot?.summary;
+  const cloudLastUpdate = cloudUpdatedAt
+    ? new Date(cloudUpdatedAt).toLocaleTimeString()
+    : "--";
+
+  return (
+    <aside className="tool-panel air-panel">
+      <section className="panel-block">
+        <div className="section-title">
+          <Plane size={18} />
+          Air Picture
+        </div>
+        <div className="object-summary air-summary">
+          <div>
+            <strong>{airObjects.length}</strong>
+            <span>Air Tracks</span>
+          </div>
+          <div>
+            <strong>{hostileAir.length}</strong>
+            <span>Hostile</span>
+          </div>
+          <div>
+            <strong>{friendlyAir.length}</strong>
+            <span>Friendly</span>
+          </div>
+          <div>
+            <strong>{nearestHostileRange === undefined ? "--" : nearestHostileRange.toFixed(0)}</strong>
+            <span>Nearest Range</span>
+          </div>
+        </div>
+        <div className="metric-grid">
+          <span>Nearest Hostile</span>
+          <strong>{nearestHostile ? objectLabel(nearestHostile.object) : "--"}</strong>
+          <span>Bearing</span>
+          <strong>{nearestHostileBearing === undefined ? "--" : `${nearestHostileBearing.toFixed(1)} deg`}</strong>
+          <span>Player Pos</span>
+          <strong>{formatWorldPoint(player, mapInfo)}</strong>
+          <span>Fusion Mode</span>
+          <strong>{cloudSnapshot ? "Cloud FusedSnapshot" : "8111 local fallback"}</strong>
+        </div>
+      </section>
+
+      <section className="panel-block air-track-block">
+        <div className="section-title">
+          <Shield size={18} />
+          Air Tracks
+        </div>
+        <div className="air-track-head">
+          <span>Track</span>
+          <span>Side</span>
+          <span>Conf</span>
+          <span>Show</span>
+        </div>
+        <div className="air-track-list">
+          {airObjects.length === 0 && (
+            <div className="empty-state">
+              {cloudEnabled
+                ? "Waiting for aircraft-class tracks from cloud snapshot."
+                : "Enable cloud viewer with ?cloud=1&room=<id>, or use local 8111 air data."}
+            </div>
+          )}
+          {airObjects.map(({ object, index, key }) => {
+            const affiliation = inferAffiliation(object);
+            const isVisible = !hiddenObjectKeys.has(key);
+
+            return (
+              <div className={`air-track-row ${affiliation}`} key={key}>
+                <span className="object-dot" style={{ background: objectColor(object) }} />
+                <span>{objectLabel(object)}</span>
+                <strong>{affiliationTheme[affiliation].label}</strong>
+                <strong>{formatTrackConfidence(object)}</strong>
+                <button
+                  type="button"
+                  className={isVisible ? "visibility-button" : "visibility-button hidden"}
+                  onClick={() => toggleObjectVisibility(key)}
+                  title={isVisible ? "Hide track" : "Show track"}
+                >
+                  {isVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel-block">
+        <div className="section-title">
+          <RadioTower size={18} />
+          Cloud Viewer
+        </div>
+        <div className="split-notes">
+          <div>
+            <strong>{formatCloudStatus(cloudStatus)}</strong>
+            <span>{cloudError ?? (cloudEnabled ? "Subscribed to viewer snapshot stream." : "Add cloud query params to subscribe.")}</span>
+          </div>
+          <div>
+            <strong>Room</strong>
+            <span>{cloudSnapshot?.roomId ?? "--"}</span>
+          </div>
+          <div>
+            <strong>Seq</strong>
+            <span>{cloudSnapshot?.seq ?? "--"} / {cloudLastUpdate}</span>
+          </div>
+          <div>
+            <strong>Summary</strong>
+            <span>
+              {cloudSummary
+                ? `${cloudSummary.totalTracks} tracks, ${cloudSummary.interestRegions} ROI`
+                : `${objects.length} displayed tracks`}
+            </span>
+          </div>
+        </div>
+      </section>
+    </aside>
+  );
+}
+
 export default function App() {
   const mapData = useWT8111Map();
+  const cloudViewer = useCloudTacticalViewer();
+  const [mode, setMode] = useState<WorkbenchMode>("ground");
   const [markers, setMarkers] = useState<MapMarker[]>([]);
   const [objectFilters, setObjectFilters] = useState<Set<Exclude<ObjectFilter, "all">>>(
     () => new Set(objectFilterOptions.map((option) => option.value))
@@ -1881,10 +1964,25 @@ export default function App() {
   const [hiddenObjectKeys, setHiddenObjectKeys] = useState<Set<string>>(() => new Set());
   const [sourceRef, setSourceRef] = useState<FirePointRef>({ kind: "player" });
   const [targetRef, setTargetRef] = useState<FirePointRef | undefined>();
-  const [hostileTracks, setHostileTracks] = useState<HostileTrack[]>([]);
-  const [trackNow, setTrackNow] = useState(() => Date.now());
   const activeMarker = markers[markers.length - 1];
-  const objects = mapData.ok ? mapData.mapObjects ?? EMPTY_MAP_OBJECTS : EMPTY_MAP_OBJECTS;
+  const localObjects = mapData.ok ? mapData.mapObjects ?? EMPTY_MAP_OBJECTS : EMPTY_MAP_OBJECTS;
+  const cloudObjects = useMemo(
+    () => cloudSnapshotToMapObjects(cloudViewer.snapshot),
+    [cloudViewer.snapshot]
+  );
+  const cloudInterestRegions = useMemo(
+    () => normalizeCloudInterestRegions(cloudViewer.snapshot),
+    [cloudViewer.snapshot]
+  );
+  const localPlayer = useMemo(() => findPlayer(localObjects), [localObjects]);
+  const objects = useMemo(
+    () =>
+      cloudViewer.snapshot
+        ? [...(localPlayer ? [localPlayer] : []), ...cloudObjects]
+        : localObjects,
+    [cloudViewer.snapshot, localPlayer, cloudObjects, localObjects]
+  );
+  const trackSource = cloudViewer.snapshot ? "cloud" : "local";
 
   const statusText = mapData.ok ? "8111 Map Online" : "8111 Map Offline";
   const lastUpdate = mapData.updatedAt
@@ -1892,6 +1990,7 @@ export default function App() {
     : "--";
 
   const player = useMemo(() => findPlayer(objects), [objects]);
+  const modeTitle = mode === "ground" ? "Ground Fire Workbench" : "Air Tactical Workbench";
   const sourcePoint = useMemo(
     () => resolveFirePoint(sourceRef, objects, markers),
     [sourceRef, objects, markers]
@@ -1916,15 +2015,6 @@ export default function App() {
       }
     }
   }, [targetRef, targetPoint]);
-
-  useEffect(() => {
-    if (!mapData.updatedAt) {
-      return;
-    }
-
-    setTrackNow(mapData.updatedAt);
-    setHostileTracks((previous) => updateHostileTracks(previous, objects, mapData.updatedAt));
-  }, [objects, mapData.updatedAt]);
 
   function clearMarkers() {
     setMarkers([]);
@@ -1982,15 +2072,45 @@ export default function App() {
       <header className="topbar">
         <div className="brand-block">
           <div className="eyebrow">WT 8111 Neo</div>
-          <h1>Map Workbench</h1>
+          <h1>{modeTitle}</h1>
         </div>
         <div className="status-group">
+          <div className="mode-switch" aria-label="GUI mode">
+            <button
+              type="button"
+              className={mode === "ground" ? "active" : ""}
+              onClick={() => setMode("ground")}
+            >
+              <Shield size={16} />
+              Ground
+            </button>
+            <button
+              type="button"
+              className={mode === "air" ? "active" : ""}
+              onClick={() => setMode("air")}
+            >
+              <Plane size={16} />
+              Air
+            </button>
+          </div>
           <div className={`status-pill ${mapData.ok ? "online" : "offline"}`}>
             <Activity size={16} />
             {statusText}
           </div>
-          <div className="status-pill neutral">
+          <div
+            className={`status-pill ${
+              cloudViewer.status === "connected"
+                ? "online"
+                : cloudViewer.status === "disabled"
+                  ? "neutral"
+                  : "offline"
+            }`}
+          >
             <RadioTower size={16} />
+            {formatCloudStatus(cloudViewer.status)}
+          </div>
+          <div className="status-pill neutral">
+            <Activity size={16} />
             {lastUpdate}
           </div>
           <div className="status-pill neutral">
@@ -2004,8 +2124,8 @@ export default function App() {
         <MapSurface
           mapInfo={mapData.mapInfo}
           objects={objects}
-          hostileTracks={hostileTracks}
-          trackNow={trackNow}
+          interestRegions={cloudInterestRegions}
+          trackSource={trackSource}
           markers={markers}
           activeMarker={activeMarker}
           sourcePoint={sourcePoint}
@@ -2015,24 +2135,38 @@ export default function App() {
           setTargetRef={setTargetRef}
           setMapTarget={setMapTarget}
         />
-        <ToolPanel
-          mapInfo={mapData.mapInfo}
-          objects={objects}
-          markers={markers}
-          activeMarker={activeMarker}
-          sourcePoint={sourcePoint}
-          targetPoint={targetPoint}
-          objectFilters={objectFilters}
-          hiddenObjectKeys={hiddenObjectKeys}
-          filterMenuOpen={filterMenuOpen}
-          setFilterMenuOpen={setFilterMenuOpen}
-          toggleObjectFilter={toggleObjectFilter}
-          setAllObjectFilters={setAllObjectFilters}
-          toggleObjectVisibility={toggleObjectVisibility}
-          setSourceRef={setSourceRef}
-          setTargetRef={setTargetRef}
-          clearMarkers={clearMarkers}
-        />
+        {mode === "ground" ? (
+          <ToolPanel
+            mapInfo={mapData.mapInfo}
+            objects={objects}
+            markers={markers}
+            activeMarker={activeMarker}
+            sourcePoint={sourcePoint}
+            targetPoint={targetPoint}
+            objectFilters={objectFilters}
+            hiddenObjectKeys={hiddenObjectKeys}
+            filterMenuOpen={filterMenuOpen}
+            setFilterMenuOpen={setFilterMenuOpen}
+            toggleObjectFilter={toggleObjectFilter}
+            setAllObjectFilters={setAllObjectFilters}
+            toggleObjectVisibility={toggleObjectVisibility}
+            setSourceRef={setSourceRef}
+            setTargetRef={setTargetRef}
+            clearMarkers={clearMarkers}
+          />
+        ) : (
+          <AirTacticalPanel
+            mapInfo={mapData.mapInfo}
+            objects={objects}
+            cloudSnapshot={cloudViewer.snapshot}
+            cloudStatus={cloudViewer.status}
+            cloudError={cloudViewer.error}
+            cloudUpdatedAt={cloudViewer.updatedAt}
+            cloudEnabled={cloudViewer.config.enabled}
+            hiddenObjectKeys={hiddenObjectKeys}
+            toggleObjectVisibility={toggleObjectVisibility}
+          />
+        )}
       </section>
 
       {!mapData.ok && (
