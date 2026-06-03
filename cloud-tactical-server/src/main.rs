@@ -35,11 +35,13 @@ async fn main() {
     tracing::info!("Fusion interval: {}ms", config.fusion_interval_ms);
     tracing::info!("Track history: {}s, ROI TTL: {}s", config.track_history_secs, config.roi_ttl_secs);
     tracing::info!("Max rooms: {}, Max clients/room: {}", config.max_rooms, config.max_clients_per_room);
+    tracing::info!("Max map image upload: {} bytes", config.max_map_image_bytes);
 
     // 构建应用状态
     let state = AppState {
         rooms: Arc::new(Mutex::new(RoomManager::new(&config))),
         start_time: std::time::Instant::now(),
+        max_map_image_bytes: config.max_map_image_bytes,
     };
 
     let app = server::build_router(state);

@@ -1,0 +1,1390 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WT 8111 Neo Cloud Room Management</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+          BlinkMacSystemFont, sans-serif;
+        --app-bg: #1c1c1f;
+        --app-bg-soft: #242428;
+        --panel: rgba(45, 45, 49, 0.82);
+        --panel-solid: #2d2d31;
+        --card: rgba(55, 55, 60, 0.86);
+        --card-strong: rgba(64, 64, 69, 0.94);
+        --stroke: rgba(255, 255, 255, 0.105);
+        --stroke-strong: rgba(255, 255, 255, 0.18);
+        --text: #f3f3f3;
+        --text-muted: #c8c8c8;
+        --text-subtle: #9d9da3;
+        --accent: #60cdff;
+        --accent-strong: #7ddcff;
+        --success: #6ccb5f;
+        --warning: #f4bf45;
+        --danger: #ff7b72;
+        --shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-width: 360px;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 28%),
+          linear-gradient(180deg, rgba(96, 205, 255, 0.055), transparent 42%),
+          var(--app-bg);
+        color: var(--text);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      button {
+        border: 1px solid var(--stroke-strong);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.075);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.11);
+        border-color: rgba(255, 255, 255, 0.26);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.46;
+      }
+
+      .app {
+        display: grid;
+        grid-template-rows: 48px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      .titlebar {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        min-height: 48px;
+        padding: 0 14px 0 18px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+        background: rgba(31, 31, 35, 0.72);
+        backdrop-filter: blur(20px) saturate(1.15);
+      }
+
+      .app-icon {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        margin-right: 10px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, #60cdff, #7bffab);
+        color: #071014;
+      }
+
+      .app-icon svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .titlebar h1 {
+        margin: 0;
+        font-size: 0.86rem;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--stroke);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.055);
+        color: var(--text-muted);
+        font-size: 0.78rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--warning);
+        box-shadow: 0 0 0 3px rgba(244, 191, 69, 0.13);
+      }
+
+      .status-chip.online .status-dot {
+        background: var(--success);
+        box-shadow: 0 0 0 3px rgba(108, 203, 95, 0.13);
+      }
+
+      .status-chip.offline .status-dot {
+        background: var(--danger);
+        box-shadow: 0 0 0 3px rgba(255, 123, 114, 0.13);
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .nav {
+        padding: 14px 12px;
+        border-right: 1px solid rgba(255, 255, 255, 0.075);
+        background: rgba(31, 31, 35, 0.5);
+      }
+
+      .nav-item {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        min-height: 40px;
+        padding: 0 12px;
+        border-radius: 5px;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+
+      .nav-item.active {
+        background: rgba(255, 255, 255, 0.09);
+        color: var(--text);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+
+      .nav-item svg,
+      .section-title svg,
+      .button-icon,
+      .state-icon {
+        width: 18px;
+        height: 18px;
+        stroke-width: 1.85;
+      }
+
+      .content {
+        min-width: 0;
+        overflow: auto;
+      }
+
+      .page {
+        width: min(1120px, calc(100vw - 308px));
+        padding: 28px;
+      }
+
+      .page-heading {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 18px;
+      }
+
+      .page-heading h2 {
+        margin: 0;
+        font-size: 1.75rem;
+        line-height: 1.18;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+
+      .page-heading p {
+        margin: 0;
+        max-width: 760px;
+        color: var(--text-muted);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 14px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .card {
+        min-width: 0;
+        padding: 20px;
+        border: 1px solid var(--stroke);
+        border-radius: var(--radius);
+        background: var(--card);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px) saturate(1.12);
+      }
+
+      .setting-row {
+        padding: 14px;
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.048);
+      }
+
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .section-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .section-title h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+
+      .section-title p {
+        margin: 4px 0 0;
+        color: var(--text-muted);
+        font-size: 0.84rem;
+        line-height: 1.35;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--text);
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+
+      .hint {
+        color: var(--text-subtle);
+        font-size: 0.78rem;
+        font-weight: 400;
+        line-height: 1.35;
+      }
+
+      input {
+        min-width: 0;
+        width: 100%;
+        min-height: 34px;
+        padding: 6px 10px;
+        border: 1px solid var(--stroke-strong);
+        border-radius: 5px;
+        background: rgba(24, 24, 27, 0.78);
+        color: var(--text);
+        outline: none;
+      }
+
+      input::placeholder {
+        color: #8f8f96;
+      }
+
+      input:focus {
+        border-color: var(--accent);
+        box-shadow: inset 0 -2px 0 var(--accent);
+      }
+
+      .toggle-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        min-height: 44px;
+      }
+
+      .switch {
+        position: relative;
+        width: 44px;
+        height: 22px;
+        flex: 0 0 auto;
+      }
+
+      .switch input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+
+      .slider {
+        position: absolute;
+        inset: 0;
+        border: 1px solid var(--stroke-strong);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .slider::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #f5f5f5;
+        transition: transform 160ms ease;
+      }
+
+      .switch input:checked + .slider {
+        border-color: rgba(96, 205, 255, 0.72);
+        background: rgba(96, 205, 255, 0.58);
+      }
+
+      .switch input:checked + .slider::after {
+        transform: translateX(21px);
+        background: #071014;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 2px;
+      }
+
+      .command {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 0 13px;
+        font-weight: 600;
+      }
+
+      .command.primary {
+        border-color: rgba(96, 205, 255, 0.55);
+        background: #60cdff;
+        color: #081216;
+      }
+
+      .command.primary:hover:not(:disabled) {
+        background: var(--accent-strong);
+      }
+
+      .command.subtle {
+        color: var(--text-muted);
+      }
+
+      .info-bar {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid rgba(96, 205, 255, 0.28);
+        border-radius: 6px;
+        background: rgba(96, 205, 255, 0.09);
+      }
+
+      .info-bar.success {
+        border-color: rgba(108, 203, 95, 0.34);
+        background: rgba(108, 203, 95, 0.09);
+      }
+
+      .info-bar.warning {
+        border-color: rgba(244, 191, 69, 0.36);
+        background: rgba(244, 191, 69, 0.1);
+      }
+
+      .info-bar.error {
+        border-color: rgba(255, 123, 114, 0.38);
+        background: rgba(255, 123, 114, 0.1);
+      }
+
+      .info-bar strong {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      .info-bar span {
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        line-height: 1.35;
+      }
+
+      .state-icon {
+        color: var(--accent);
+      }
+
+      .info-bar.success .state-icon {
+        color: var(--success);
+      }
+
+      .info-bar.warning .state-icon {
+        color: var(--warning);
+      }
+
+      .info-bar.error .state-icon {
+        color: var(--danger);
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        min-height: 72px;
+        padding: 12px;
+        border: 1px solid var(--stroke);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 1.48rem;
+        line-height: 1;
+        font-weight: 600;
+      }
+
+      .metric span {
+        color: var(--text-muted);
+        font-size: 0.8rem;
+      }
+
+      .url-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .map-launch-panel {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .map-launch-panel .actions {
+        margin-top: 0;
+      }
+
+      .url-row {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .url-row span {
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        font-weight: 600;
+      }
+
+      .url-value {
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--stroke);
+        border-radius: 5px;
+        background: rgba(18, 18, 21, 0.68);
+        color: var(--text);
+        font-family: Consolas, "Cascadia Mono", monospace;
+        font-size: 0.78rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .icon-command {
+        display: inline-grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+      }
+
+      .room-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .room-header,
+      .room-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 74px 78px 88px 90px 112px;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .room-header {
+        padding: 0 4px 7px;
+        border-bottom: 1px solid var(--stroke);
+        color: var(--text-subtle);
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .room-row {
+        min-height: 42px;
+        padding: 6px 8px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 0.84rem;
+        text-align: left;
+      }
+
+      .room-row:hover {
+        border-color: var(--stroke);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .room-row:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .room-name {
+        min-width: 0;
+        color: var(--text);
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tag {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        min-width: 56px;
+        min-height: 24px;
+        padding: 0 8px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .tag.secure {
+        background: rgba(244, 191, 69, 0.13);
+        color: #ffd77a;
+      }
+
+      .tag.ready {
+        background: rgba(108, 203, 95, 0.12);
+        color: #9be18f;
+      }
+
+      .row-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 28px;
+        padding: 0 9px;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .row-action svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .empty-state {
+        display: grid;
+        place-items: center;
+        min-height: 128px;
+        padding: 18px;
+        border: 1px dashed var(--stroke-strong);
+        border-radius: 6px;
+        color: var(--text-subtle);
+        text-align: center;
+        line-height: 1.4;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .small-note {
+        margin-top: 10px;
+        color: var(--text-subtle);
+        font-size: 0.78rem;
+        line-height: 1.4;
+      }
+
+      @media (max-width: 960px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .nav {
+          display: none;
+        }
+
+        .page {
+          width: 100%;
+          padding: 20px;
+        }
+
+        .grid,
+        .split {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .titlebar {
+          grid-template-columns: auto 1fr;
+        }
+
+        .titlebar .status-chip {
+          display: none;
+        }
+
+        .card-header {
+          display: grid;
+        }
+
+        .metric-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .url-row {
+          grid-template-columns: 1fr auto;
+        }
+
+        .url-row span {
+          grid-column: 1 / -1;
+        }
+
+        .room-header {
+          display: none;
+        }
+
+        .room-row {
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          gap: 8px;
+        }
+
+        .room-row .hide-mobile {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="titlebar">
+        <div class="app-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M12 3v18" />
+            <path d="M3 12h18" />
+            <path d="m7 7 10 10" />
+            <path d="m17 7-10 10" />
+          </svg>
+        </div>
+        <h1>WT 8111 Neo Cloud Tactical Server</h1>
+        <div id="serverStatus" class="status-chip">
+          <span class="status-dot"></span>
+          <span id="serverStatusText">Checking server</span>
+        </div>
+      </header>
+
+      <div class="shell">
+        <nav class="nav" aria-label="Cloud server sections">
+          <div class="nav-item active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            Room Management
+          </div>
+        </nav>
+
+        <main class="content">
+          <section class="page">
+            <div class="page-heading">
+              <h2>Cloud Room Management</h2>
+              <p>
+                Create rooms, copy relay links, and verify viewer access for WT 8111 Neo clients.
+              </p>
+            </div>
+
+            <div class="grid">
+              <div class="stack">
+                <section class="card">
+                  <div class="card-header">
+                    <div class="section-title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M5 12h14" />
+                        <path d="M12 5v14" />
+                      </svg>
+                      <div>
+                        <h3>Create Room</h3>
+                        <p>Generate a relay URL for the WinUI Sync page.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <form id="createForm" class="form-grid">
+                    <label>
+                      Room ID
+                      <input
+                        id="roomIdInput"
+                        autocomplete="off"
+                        maxlength="64"
+                        placeholder="alpha-squad"
+                      />
+                      <span class="hint">Leave empty to let the server generate an ID.</span>
+                    </label>
+
+                    <div class="split">
+                      <label>
+                        Password
+                        <input
+                          id="passwordInput"
+                          autocomplete="new-password"
+                          type="password"
+                          placeholder="Optional"
+                        />
+                      </label>
+                      <label>
+                        Player name
+                        <input id="playerInput" autocomplete="off" placeholder="Optional callsign" />
+                      </label>
+                    </div>
+
+                    <div class="toggle-row setting-row">
+                      <div>
+                        <strong>Password protected</strong>
+                        <div class="hint">Uses the password field above when enabled.</div>
+                      </div>
+                      <label class="switch" aria-label="Password protected">
+                        <input id="protectedSwitch" type="checkbox" />
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+
+                    <div class="actions">
+                      <button class="command primary" type="submit">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path d="M12 5v14" />
+                          <path d="M5 12h14" />
+                        </svg>
+                        Create room
+                      </button>
+                      <button id="refreshButton" class="command" type="button">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path d="M21 12a9 9 0 0 1-15.2 6.5" />
+                          <path d="M3 12A9 9 0 0 1 18.2 5.5" />
+                          <path d="M18 2v4h-4" />
+                          <path d="M6 22v-4h4" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+                  </form>
+                </section>
+
+                <section class="card">
+                  <div class="card-header">
+                    <div class="section-title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M10 13a5 5 0 0 0 7.1 0l2.8-2.8a5 5 0 0 0-7.1-7.1l-1.6 1.6" />
+                        <path d="M14 11a5 5 0 0 0-7.1 0l-2.8 2.8a5 5 0 0 0 7.1 7.1l1.6-1.6" />
+                      </svg>
+                      <div>
+                        <h3>Room Links</h3>
+                        <p>Copy these into the local client or open the LAN Web GUI.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="url-list">
+                    <div class="map-launch-panel setting-row">
+                      <label>
+                        Tactical map WebGUI
+                        <input
+                          id="webGuiBaseInput"
+                          autocomplete="url"
+                          placeholder="http://127.0.0.1:17711"
+                          value="http://127.0.0.1:17711"
+                        />
+                        <span class="hint">Use the game PC LAN address for tablets or other devices.</span>
+                      </label>
+                      <div class="actions">
+                        <button id="openMapButton" class="command primary" type="button" disabled>
+                          <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M3 6.5 9 4l6 2.5 6-2.5v13.5L15 20l-6-2.5-6 2.5V6.5Z" />
+                            <path d="M9 4v13.5" />
+                            <path d="M15 6.5V20" />
+                          </svg>
+                          Open tactical map
+                        </button>
+                        <button class="command" data-copy-target="webGuiUrl" type="button">
+                          <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <rect x="9" y="9" width="13" height="13" rx="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </svg>
+                          Copy map URL
+                        </button>
+                      </div>
+                    </div>
+                    <div class="url-row">
+                      <span>Relay URL</span>
+                      <div id="relayUrl" class="url-value">--</div>
+                      <button class="icon-command" data-copy-target="relayUrl" title="Copy Relay URL">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <rect x="9" y="9" width="13" height="13" rx="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="url-row">
+                      <span>Viewer URL</span>
+                      <div id="viewerUrl" class="url-value">--</div>
+                      <button class="icon-command" data-copy-target="viewerUrl" title="Copy Viewer URL">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <rect x="9" y="9" width="13" height="13" rx="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="url-row">
+                      <span>Web GUI</span>
+                      <div id="webGuiUrl" class="url-value">--</div>
+                      <button class="icon-command" data-copy-target="webGuiUrl" title="Copy Web GUI URL">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <rect x="9" y="9" width="13" height="13" rx="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="small-note">
+                    The Web GUI URL targets the local WT 8111 Neo service on port 17711 and passes this cloud server as query parameters.
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-header">
+                    <div class="section-title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M3 7h18" />
+                        <path d="M3 12h18" />
+                        <path d="M3 17h18" />
+                      </svg>
+                      <div>
+                        <h3>Active Rooms</h3>
+                        <p>Existing rooms and their current relay/viewer counts.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="room-header">
+                    <span>Room</span>
+                    <span>Access</span>
+                    <span>Relays</span>
+                    <span>Viewers</span>
+                    <span>Map</span>
+                    <span>Action</span>
+                  </div>
+                  <div id="roomList" class="room-list">
+                    <div class="empty-state">Loading rooms...</div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="stack">
+                <section id="statusBar" class="info-bar">
+                  <svg class="state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8v4" />
+                    <path d="M12 16h.01" />
+                  </svg>
+                  <div>
+                    <strong>Checking cloud server</strong>
+                    <span>Loading /healthz and /version.</span>
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-header">
+                    <div class="section-title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M12 20V10" />
+                        <path d="M18 20V4" />
+                        <path d="M6 20v-6" />
+                      </svg>
+                      <div>
+                        <h3>Server</h3>
+                        <p>Protocol and room capacity signals.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="metric-grid">
+                    <div class="metric">
+                      <strong id="metricRooms">--</strong>
+                      <span>Active rooms</span>
+                    </div>
+                    <div class="metric">
+                      <strong id="metricProtocol">--</strong>
+                      <span>Protocol</span>
+                    </div>
+                    <div class="metric">
+                      <strong id="metricRelays">--</strong>
+                      <span>Relays</span>
+                    </div>
+                    <div class="metric">
+                      <strong id="metricViewers">--</strong>
+                      <span>Viewers</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="card">
+                  <div class="card-header">
+                    <div class="section-title">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                      <div>
+                        <h3>Join Check</h3>
+                        <p>Verify the selected room password before sharing links.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <form id="joinForm" class="form-grid">
+                    <label>
+                      Room ID
+                      <input id="joinRoomInput" autocomplete="off" placeholder="alpha-squad" />
+                    </label>
+                    <label>
+                      Password
+                      <input id="joinPasswordInput" autocomplete="current-password" type="password" placeholder="Optional" />
+                    </label>
+                    <div class="actions">
+                      <button class="command" type="submit">
+                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                        Join room
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        rooms: [],
+        version: undefined,
+        health: undefined,
+        selectedRoom: undefined,
+        selectedPassword: "",
+        selectedPlayerName: ""
+      };
+
+      const webGuiBaseStorageKey = "wt8111.cloudWebGuiBaseUrl";
+
+      const icons = {
+        info: '<circle cx="12" cy="12" r="9" /><path d="M12 8v4" /><path d="M12 16h.01" />',
+        success: '<path d="M20 6 9 17l-5-5" />',
+        warning: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" />',
+        error: '<circle cx="12" cy="12" r="9" /><path d="m15 9-6 6" /><path d="m9 9 6 6" />'
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function setStatus(kind, title, message) {
+        const bar = $("statusBar");
+        const icon = bar.querySelector("svg");
+        bar.className = `info-bar ${kind === "info" ? "" : kind}`.trim();
+        icon.innerHTML = icons[kind] ?? icons.info;
+        bar.querySelector("strong").textContent = title;
+        bar.querySelector("span").textContent = message;
+      }
+
+      function setServerChip(kind, text) {
+        const chip = $("serverStatus");
+        chip.className = `status-chip ${kind}`.trim();
+        $("serverStatusText").textContent = text;
+      }
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(options.headers ?? {})
+          },
+          ...options
+        });
+
+        if (!response.ok) {
+          let message = `${response.status} ${response.statusText}`;
+          try {
+            const body = await response.json();
+            message = body.error ?? message;
+          } catch {
+            // Keep HTTP status text for non-JSON failures.
+          }
+          throw new Error(message);
+        }
+
+        return response.json();
+      }
+
+      function absoluteHttpUrl(path = "") {
+        return new URL(path, window.location.origin).toString();
+      }
+
+      function absoluteWsUrl(path) {
+        const url = new URL(path, window.location.origin);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        return url.toString();
+      }
+
+      function normalizeWebGuiBaseUrl() {
+        const value = $("webGuiBaseInput").value.trim() || "http://127.0.0.1:17711";
+        try {
+          return new URL(value).toString().replace(/\/$/, "");
+        } catch {
+          return "http://127.0.0.1:17711";
+        }
+      }
+
+      function normalizeWebGuiBaseInput() {
+        $("webGuiBaseInput").value = normalizeWebGuiBaseUrl();
+        localStorage.setItem(webGuiBaseStorageKey, $("webGuiBaseInput").value);
+        refreshSelectedMapUrl();
+      }
+
+      function webGuiUrl(roomId, password = "", playerName = "") {
+        if (!roomId) {
+          return "--";
+        }
+
+        const params = new URLSearchParams({
+          cloud: "both",
+          server: window.location.origin,
+          room: roomId
+        });
+
+        if (password) {
+          params.set("password", password);
+        }
+
+        if (playerName) {
+          params.set("player", playerName);
+        }
+
+        return `${normalizeWebGuiBaseUrl()}?${params.toString()}`;
+      }
+
+      function updateLinks(room, password = "", playerName = "") {
+        state.selectedRoom = room;
+        state.selectedPassword = password;
+        state.selectedPlayerName = playerName;
+        if (!room) {
+          $("relayUrl").textContent = "--";
+          $("viewerUrl").textContent = "--";
+          $("webGuiUrl").textContent = "--";
+          $("openMapButton").disabled = true;
+          return;
+        }
+
+        $("relayUrl").textContent = absoluteWsUrl(room.relay_url ?? `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`);
+        $("viewerUrl").textContent = absoluteWsUrl(room.viewer_url ?? `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`);
+        $("webGuiUrl").textContent = webGuiUrl(room.room_id, password, playerName);
+        $("openMapButton").disabled = false;
+        $("joinRoomInput").value = room.room_id;
+        if (password) {
+          $("joinPasswordInput").value = password;
+        }
+      }
+
+      function refreshSelectedMapUrl() {
+        if (!state.selectedRoom) {
+          updateLinks(undefined);
+          return;
+        }
+
+        $("webGuiUrl").textContent = webGuiUrl(
+          state.selectedRoom.room_id,
+          state.selectedPassword,
+          state.selectedPlayerName
+        );
+      }
+
+      function openTacticalMap(room, password = "", playerName = "") {
+        if (!room?.room_id) {
+          setStatus("warning", "No room selected", "Create or select a room before opening the tactical map.");
+          return;
+        }
+
+        const url = webGuiUrl(room.room_id, password, playerName);
+        window.open(url, "_blank", "noopener,noreferrer");
+        setStatus("success", "Opening tactical map", url);
+      }
+
+      function formatAge(seconds) {
+        if (typeof seconds !== "number") {
+          return "--";
+        }
+
+        if (seconds < 60) {
+          return `${seconds}s`;
+        }
+
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) {
+          return `${minutes}m`;
+        }
+
+        return `${Math.floor(minutes / 60)}h`;
+      }
+
+      function renderRooms() {
+        const list = $("roomList");
+        list.innerHTML = "";
+
+        if (state.rooms.length === 0) {
+          list.innerHTML = '<div class="empty-state">No active rooms. Create one to generate relay and viewer links.</div>';
+          return;
+        }
+
+        for (const room of state.rooms) {
+          const row = document.createElement("div");
+          row.className = "room-row";
+          row.tabIndex = 0;
+          row.setAttribute("role", "button");
+          row.setAttribute("aria-label", `Select room ${room.room_id}`);
+          row.innerHTML = `
+            <span class="room-name" title="${escapeHtml(room.room_id)}">${escapeHtml(room.room_id)}</span>
+            <span class="tag ${room.has_password ? "secure" : ""}">${room.has_password ? "Locked" : "Open"}</span>
+            <span class="hide-mobile">${room.relay_count ?? 0}</span>
+            <span class="hide-mobile">${room.viewer_count ?? 0}</span>
+            <span class="tag hide-mobile ${room.has_map_image ? "ready" : ""}">${room.has_map_image ? "Ready" : formatAge(room.created_secs_ago)}</span>
+            <span>
+              <button class="row-action" type="button" data-room-map="${escapeHtml(room.room_id)}" title="Open tactical map">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M3 6.5 9 4l6 2.5 6-2.5v13.5L15 20l-6-2.5-6 2.5V6.5Z" />
+                  <path d="M9 4v13.5" />
+                  <path d="M15 6.5V20" />
+                </svg>
+                Open map
+              </button>
+            </span>
+          `;
+          row.addEventListener("click", () => {
+            const detail = {
+              room_id: room.room_id,
+              relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
+              viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
+            };
+            updateLinks(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
+            setStatus("info", "Room selected", `Selected ${room.room_id}. Copy the Relay URL into the WinUI Sync page.`);
+          });
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              row.click();
+            }
+          });
+          row.querySelector("[data-room-map]").addEventListener("click", (event) => {
+            event.stopPropagation();
+            const detail = {
+              room_id: room.room_id,
+              relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
+              viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
+            };
+            updateLinks(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
+            openTacticalMap(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
+          });
+          list.appendChild(row);
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function renderMetrics() {
+        const relays = state.rooms.reduce((sum, room) => sum + Number(room.relay_count ?? 0), 0);
+        const viewers = state.rooms.reduce((sum, room) => sum + Number(room.viewer_count ?? 0), 0);
+        $("metricRooms").textContent = state.health?.rooms ?? state.rooms.length;
+        $("metricProtocol").textContent = state.version?.protocol_version ? `v${state.version.protocol_version}` : "--";
+        $("metricRelays").textContent = relays;
+        $("metricViewers").textContent = viewers;
+      }
+
+      async function refreshAll(showSuccess = false) {
+        try {
+          const [health, version, rooms] = await Promise.all([
+            api("/healthz"),
+            api("/version"),
+            api("/api/rooms")
+          ]);
+
+          state.health = health;
+          state.version = version;
+          state.rooms = rooms;
+          setServerChip("online", `${version.service} ${version.version}`);
+          renderMetrics();
+          renderRooms();
+          if (showSuccess) {
+            setStatus("success", "Server refreshed", `Loaded ${rooms.length} active room(s).`);
+          } else {
+            setStatus("success", "Cloud server online", `Protocol v${version.protocol_version}, ${rooms.length} active room(s).`);
+          }
+        } catch (error) {
+          setServerChip("offline", "Server offline");
+          setStatus("error", "Cloud server unavailable", error.message);
+        }
+      }
+
+      async function createRoom(event) {
+        event.preventDefault();
+        const protectedRoom = $("protectedSwitch").checked;
+        const roomId = $("roomIdInput").value.trim();
+        const password = protectedRoom ? $("passwordInput").value : "";
+        const playerName = $("playerInput").value.trim();
+
+        try {
+          setStatus("info", "Creating room", roomId ? `POST /api/rooms for ${roomId}.` : "Requesting generated room ID.");
+          const room = await api("/api/rooms", {
+            method: "POST",
+            body: JSON.stringify({
+              room_id: roomId || undefined,
+              password: password || undefined,
+              player_name: playerName || undefined
+            })
+          });
+
+          updateLinks(room, password, playerName);
+          await refreshAll(false);
+          setStatus("success", "Room created", `Room ${room.room_id} is ready. Copy the Relay URL into the WinUI client.`);
+        } catch (error) {
+          setStatus("error", "Room create failed", error.message);
+        }
+      }
+
+      async function joinRoom(event) {
+        event.preventDefault();
+        const roomId = $("joinRoomInput").value.trim();
+        const password = $("joinPasswordInput").value;
+
+        if (!roomId) {
+          setStatus("warning", "Room ID required", "Enter or select a room before running join check.");
+          return;
+        }
+
+        try {
+          setStatus("info", "Joining room", `POST /api/rooms/${roomId}/join.`);
+          const room = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+            method: "POST",
+            body: JSON.stringify({ password })
+          });
+          updateLinks(room, password, $("playerInput").value.trim());
+          setStatus("success", "Room accepted", `Room ${room.room_id} accepted viewer and relay access.`);
+        } catch (error) {
+          setStatus("error", "Join failed", error.message);
+        }
+      }
+
+      async function copyTextFrom(targetId) {
+        const text = $(targetId).textContent.trim();
+        if (!text || text === "--") {
+          setStatus("warning", "Nothing to copy", "Create or select a room first.");
+          return;
+        }
+
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("success", "Copied", text);
+        } catch {
+          setStatus("warning", "Clipboard blocked", "Select the URL text manually if the browser blocks clipboard access.");
+        }
+      }
+
+      $("createForm").addEventListener("submit", createRoom);
+      $("joinForm").addEventListener("submit", joinRoom);
+      $("refreshButton").addEventListener("click", () => refreshAll(true));
+      $("webGuiBaseInput").addEventListener("input", () => {
+        localStorage.setItem(webGuiBaseStorageKey, $("webGuiBaseInput").value.trim());
+        refreshSelectedMapUrl();
+      });
+      $("webGuiBaseInput").addEventListener("blur", normalizeWebGuiBaseInput);
+      $("openMapButton").addEventListener("click", () => {
+        openTacticalMap(state.selectedRoom, state.selectedPassword, state.selectedPlayerName);
+      });
+      $("protectedSwitch").addEventListener("change", (event) => {
+        $("passwordInput").disabled = !event.target.checked;
+        if (!event.target.checked) {
+          $("passwordInput").value = "";
+        }
+      });
+
+      for (const button of document.querySelectorAll("[data-copy-target]")) {
+        button.addEventListener("click", () => copyTextFrom(button.dataset.copyTarget));
+      }
+
+      $("passwordInput").disabled = true;
+      const savedWebGuiBaseUrl = localStorage.getItem(webGuiBaseStorageKey);
+      if (savedWebGuiBaseUrl) {
+        $("webGuiBaseInput").value = savedWebGuiBaseUrl;
+      }
+      refreshAll(false);
+      window.setInterval(() => refreshAll(false), 10000);
+    </script>
+  </body>
+</html>

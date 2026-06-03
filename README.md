@@ -13,6 +13,9 @@ The project is still an early development prototype.
 - Web tactical map workbench built with React, Vite, and TypeScript.
 - Rust local HTTP service built with Axum.
 - WinUI 3 local control console for Windows.
+- Cloud Tactical Server v0.2.0 includes a WinUI-style room-management WebGUI at
+  `http://<cloud-server>:17712/`, with buttons that open the selected room in
+  the local/LAN tactical map Web GUI.
 - The WinUI console is the only app players need to start manually.
 - The Rust service serves the built Web GUI and proxies War Thunder's local
   `8111` endpoints to LAN devices through `17711`.
@@ -127,11 +130,13 @@ npm.cmd run service:build
 
 ## Documentation
 
+- [Current Architecture zh-CN](CURRENT_ARCHITECTURE.zh-CN.md)
 - [War Thunder 8111 API Reference](WT_8111_API_REFERENCE.md)
 - [War Thunder 8111 API Reference zh-CN](WT_8111_API_REFERENCE.zh-CN.md)
 - [Native Capture / Local Service Development Notes zh-CN](NATIVE_CAPTURE_PIPELINE.zh-CN.md)
 - [Client Cloud Tactical Adaptation zh-CN](CLIENT_CLOUD_ADAPTATION.zh-CN.md)
 - [Cloud Tactical Server zh-CN](CLOUD_TACTICAL_SERVER.zh-CN.md)
+- [Cloud Tactical Server WebGUI](cloud-tactical-server/docs/WEBGUI.md)
 
 When the API reference is updated, update both language versions in the same
 change.

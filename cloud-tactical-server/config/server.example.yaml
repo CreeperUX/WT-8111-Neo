@@ -12,6 +12,7 @@ roi_ttl_secs: 15.0            # 目标消失后 ROI 保留时长
 # 服务器限制
 max_rooms: 100                # 最大房间数
 max_clients_per_room: 32      # 每个房间最大客户端数
+max_map_image_bytes: 8388608  # 每个房间首张地图图像上传大小上限
 room_password_required: false # 是否强制要求密码
 
 # 安全 (阶段 5 启用)

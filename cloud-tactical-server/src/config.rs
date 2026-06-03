@@ -25,6 +25,9 @@ pub struct ServerConfig {
 
     #[serde(default = "default_max_clients_per_room")]
     pub max_clients_per_room: usize,
+
+    #[serde(default = "default_max_map_image_bytes")]
+    pub max_map_image_bytes: usize,
 }
 
 fn default_host() -> String {
@@ -59,6 +62,10 @@ fn default_max_clients_per_room() -> usize {
     32
 }
 
+fn default_max_map_image_bytes() -> usize {
+    8 * 1024 * 1024
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -70,6 +77,7 @@ impl Default for ServerConfig {
             max_rooms: default_max_rooms(),
             room_password_required: default_room_password_required(),
             max_clients_per_room: default_max_clients_per_room(),
+            max_map_image_bytes: default_max_map_image_bytes(),
         }
     }
 }

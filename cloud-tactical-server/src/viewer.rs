@@ -103,7 +103,7 @@ fn build_snapshot(result: &FusionResult, room_id: &str) -> FusedSnapshot {
         room_id: room_id.to_string(),
         seq: 0,
         server_time_ms: unix_ms(),
-        map_generation: 0,
+        map_generation: result.map_generation,
         tracks,
         interest_regions: rois,
         summary: Some(TacticalSummary {

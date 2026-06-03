@@ -11,6 +11,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY build.rs ./
 COPY protos/ protos/
+COPY webgui/ webgui/
 
 RUN mkdir -p src && \
     echo 'fn main() {}' > src/main.rs && \

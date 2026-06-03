@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+
+use bytes::Bytes;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::config::ServerConfig;
@@ -14,10 +16,20 @@ pub struct RoomInfo {
     pub map_generation: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct MapImage {
+    pub bytes: Bytes,
+    pub content_type: String,
+    pub uploaded_at: std::time::Instant,
+    pub uploaded_by: String,
+    pub map_generation: u32,
+}
+
 struct RoomState {
     info: RoomInfo,
     observation_tx: mpsc::UnboundedSender<ParsedObservation>,
     snapshot_tx: broadcast::Sender<FusionResult>,
+    map_image: Option<MapImage>,
 }
 
 #[derive(Clone)]
@@ -96,6 +108,7 @@ impl RoomManager {
                 info: handle.info.clone(),
                 observation_tx: obs_tx,
                 snapshot_tx: snap_tx,
+                map_image: None,
             },
         );
 
@@ -124,6 +137,38 @@ impl RoomManager {
         self.rooms.values().map(|s| s.info.clone()).collect()
     }
 
+    pub fn has_map_image(&self, room_id: &str) -> bool {
+        self.rooms
+            .get(room_id)
+            .and_then(|state| state.map_image.as_ref())
+            .is_some()
+    }
+
+    pub fn get_map_image(&self, room_id: &str) -> Result<MapImage, RoomError> {
+        self.rooms
+            .get(room_id)
+            .ok_or(RoomError::RoomNotFound)?
+            .map_image
+            .clone()
+            .ok_or(RoomError::MapImageMissing)
+    }
+
+    pub fn store_first_map_image(
+        &mut self,
+        room_id: &str,
+        image: MapImage,
+    ) -> Result<(bool, MapImage), RoomError> {
+        let state = self.rooms.get_mut(room_id).ok_or(RoomError::RoomNotFound)?;
+
+        if let Some(existing) = state.map_image.clone() {
+            return Ok((false, existing));
+        }
+
+        state.info.map_generation = image.map_generation;
+        state.map_image = Some(image.clone());
+        Ok((true, image))
+    }
+
     pub fn remove_room(&mut self, room_id: &str) -> bool {
         self.rooms.remove(room_id).is_some()
     }
@@ -138,6 +183,7 @@ pub enum RoomError {
     RoomExists,
     TooManyRooms,
     RoomNotFound,
+    MapImageMissing,
     InvalidPassword,
     RoomFull,
 }
@@ -148,6 +194,7 @@ impl std::fmt::Display for RoomError {
             RoomError::RoomExists => write!(f, "Room already exists"),
             RoomError::TooManyRooms => write!(f, "Server room limit reached"),
             RoomError::RoomNotFound => write!(f, "Room not found"),
+            RoomError::MapImageMissing => write!(f, "Map image not found"),
             RoomError::InvalidPassword => write!(f, "Invalid password"),
             RoomError::RoomFull => write!(f, "Room is full"),
         }

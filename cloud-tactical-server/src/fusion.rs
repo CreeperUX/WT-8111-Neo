@@ -82,6 +82,7 @@ pub struct PredictedRoi {
 /// 一次 tick 的融合结果
 #[derive(Debug, Clone)]
 pub struct FusionResult {
+    pub map_generation: u32,
     pub tracks: Vec<Track>,
     pub rois: Vec<PredictedRoi>,
     pub total_count: u32,
@@ -95,6 +96,7 @@ pub struct FusionResult {
 pub struct FusionEngine {
     tracks: HashMap<String, Track>,
     track_counter: u64,
+    map_generation: u32,
     config: ServerConfig,
     pending_observations: Vec<ParsedObservation>,
 }
@@ -104,6 +106,7 @@ impl FusionEngine {
         Self {
             tracks: HashMap::new(),
             track_counter: 0,
+            map_generation: 0,
             config: config.clone(),
             pending_observations: Vec::new(),
         }
@@ -120,6 +123,10 @@ impl FusionEngine {
         let observations = std::mem::take(&mut self.pending_observations);
 
         for obs in &observations {
+            if obs.map_generation != 0 {
+                self.map_generation = obs.map_generation;
+            }
+
             for obj in &obs.objects {
                 let fingerprint = TrackFingerprint {
                     affiliation: obj.affiliation,
@@ -151,6 +158,7 @@ impl FusionEngine {
         let friendly_count = all_tracks.iter().filter(|t| t.affiliation == 0).count() as u32;
 
         FusionResult {
+            map_generation: self.map_generation,
             total_count: all_tracks.len() as u32,
             hostile_count,
             friendly_count,

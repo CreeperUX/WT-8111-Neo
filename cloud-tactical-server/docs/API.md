@@ -1,12 +1,12 @@
 # WT 8111 Neo Cloud Tactical Server — REST API
 
-> **Version:** 0.1.0  
-> **Protocol Version:** 1  
+> **Version:** 0.2.0<br>
+> **Protocol Version:** 1<br>
 > **Base URL:** `http://<host>:17712`
 
 ## Overview
 
-The Cloud Tactical Server provides room management and real-time tactical data fusion for WT 8111 Neo. All REST endpoints return JSON. WebSocket endpoints use Protobuf binary frames (see [PROTOCOL.md](PROTOCOL.md)).
+The Cloud Tactical Server provides room management and real-time tactical data fusion for WT 8111 Neo. It also serves a lightweight room-management WebGUI at `/` and `/rooms`. All REST endpoints return JSON. WebSocket endpoints use Protobuf binary frames (see [PROTOCOL.md](PROTOCOL.md)).
 
 ## Endpoints
 
@@ -34,10 +34,30 @@ Server version and protocol info.
 ```json
 {
   "service": "cloud-tactical-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "protocol_version": 1
 }
 ```
+
+---
+
+### WebGUI
+
+#### `GET /`
+
+Serves the Cloud Room Management console. The page matches the WinUI control-console style and calls the REST endpoints below to create rooms, join rooms, refresh active rooms, copy relay/viewer links, and open the local tactical map WebGUI for a selected room.
+
+#### `GET /rooms`
+
+Alias for `/`.
+
+The tactical map launch URL defaults to `http://127.0.0.1:17711` and is generated as:
+
+```text
+http://127.0.0.1:17711?cloud=both&server=<cloud-server-origin>&room=<room-id>
+```
+
+For tablets or other LAN devices, change the base URL in the console to the game PC address, for example `http://192.168.1.20:17711`.
 
 ---
 
@@ -100,6 +120,8 @@ Get room details.
   "created_secs_ago": 120,
   "relay_count": 2,
   "viewer_count": 3,
+  "map_generation": 128,
+  "has_map_image": true,
   "relay_url": "/ws/rooms/alpha-squad/relay",
   "viewer_url": "/ws/rooms/alpha-squad/viewer"
 }
@@ -134,6 +156,60 @@ Verify room access. Required before connecting to WebSocket.
 
 ---
 
+#### `PUT /api/rooms/{room_id}/map-image`
+
+Upload the room map background image. Every relay client may attempt this after joining; the server stores only the first valid image received for the room and ignores later uploads.
+
+**Headers:**
+```http
+Content-Type: image/png
+X-WT8111-Room-Password: s3cret
+X-WT8111-Client-ID: relay-client-id
+X-WT8111-Map-Generation: 128
+```
+
+**Body:** raw image bytes from War Thunder `map.img`.
+
+**Response 201** when this upload wins:
+```json
+{
+  "ok": true,
+  "accepted": true,
+  "room_id": "alpha-squad",
+  "bytes": 323235,
+  "content_type": "image/jpeg",
+  "map_generation": 128,
+  "uploaded_secs_ago": 0
+}
+```
+
+**Response 200** for later uploads after the room already has a map image:
+```json
+{
+  "ok": true,
+  "accepted": false,
+  "room_id": "alpha-squad",
+  "bytes": 323235,
+  "content_type": "image/jpeg",
+  "map_generation": 128,
+  "uploaded_secs_ago": 12
+}
+```
+
+**Errors:** `400` for empty or non-image uploads, `403` for wrong password, `404` if room not found, `413` if over `max_map_image_bytes`.
+
+---
+
+#### `GET /api/rooms/{room_id}/map-image`
+
+Fetch the stored room map background image.
+
+**Response 200:** raw image bytes with `Content-Type` and `X-WT8111-Map-Generation` headers.
+
+**Errors:** `404` if the room does not exist or no map image has been accepted yet.
+
+---
+
 ## Connection Flow
 
 ### Relay Client (Game Host)
@@ -146,8 +222,9 @@ A **relay** uploads observation data from War Thunder's `localhost:8111`.
 3. WS  /ws/rooms/{id}/relay         (open WebSocket)
 4. Send WsEnvelope{JoinRequest}     (protocol handshake)
 5. Receive WsEnvelope{JoinResponse} (accepted=true)
-6. Stream WsEnvelope{Observation}   (upload at 1-2 Hz)
-7. Send WsEnvelope{Ping}            (keepalive every 30s)
+6. PUT  /api/rooms/{id}/map-image   (all relays may attempt; first image wins)
+7. Stream WsEnvelope{Observation}   (upload at 1-2 Hz)
+8. Send WsEnvelope{Ping}            (keepalive every 30s)
 ```
 
 ### Viewer Client (Web GUI / Tablet)
