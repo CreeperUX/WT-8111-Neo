@@ -130,7 +130,7 @@ export function useCloudTacticalRelay(mapData: WTMapPollSnapshot): CloudTactical
       }
 
       const snapshot = latestMapData.current;
-      if (!snapshot.ok || !snapshot.mapInfo?.valid) {
+      if (!snapshot.ok || !snapshot.mapInfo) {
         return;
       }
 

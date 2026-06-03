@@ -1260,7 +1260,7 @@ export async function uploadCloudMapImageOnce(
   mapInfo?: WTMapInfo,
   signal?: AbortSignal
 ): Promise<CloudMapImageUploadResult | undefined> {
-  if (!config.roomId || !mapInfo?.valid) {
+  if (!config.roomId || !mapInfo) {
     return undefined;
   }
 

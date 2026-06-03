@@ -153,15 +153,24 @@ impl RoomManager {
             .ok_or(RoomError::MapImageMissing)
     }
 
-    pub fn store_first_map_image(
+    pub fn store_map_image(
         &mut self,
         room_id: &str,
         image: MapImage,
     ) -> Result<(bool, MapImage), RoomError> {
         let state = self.rooms.get_mut(room_id).ok_or(RoomError::RoomNotFound)?;
 
-        if let Some(existing) = state.map_image.clone() {
-            return Ok((false, existing));
+        if let Some(existing) = state.map_image.as_ref() {
+            if image.map_generation < existing.map_generation {
+                return Ok((false, existing.clone()));
+            }
+
+            if image.map_generation == existing.map_generation
+                && image.bytes == existing.bytes
+                && image.content_type == existing.content_type
+            {
+                return Ok((false, existing.clone()));
+            }
         }
 
         state.info.map_generation = image.map_generation;

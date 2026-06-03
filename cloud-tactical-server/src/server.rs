@@ -244,11 +244,11 @@ async fn upload_room_map_image(
         uploaded_by,
         map_generation,
     };
-    let (accepted, stored) = rooms.store_first_map_image(&room_id, image)?;
+    let (accepted, stored) = rooms.store_map_image(&room_id, image)?;
 
     if accepted {
         tracing::info!(
-            "Room {} accepted map image from {} ({} bytes, generation {})",
+            "Room {} stored map image from {} ({} bytes, generation {})",
             room_id,
             stored.uploaded_by,
             stored.bytes.len(),
@@ -256,9 +256,10 @@ async fn upload_room_map_image(
         );
     } else {
         tracing::debug!(
-            "Room {} ignored later map image upload; first image came from {}",
+            "Room {} ignored stale or duplicate map image upload; stored image came from {} (generation {})",
             room_id,
-            stored.uploaded_by
+            stored.uploaded_by,
+            stored.map_generation
         );
     }
 
