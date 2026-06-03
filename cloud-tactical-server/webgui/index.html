@@ -775,21 +775,15 @@
                       <span class="hint">Leave empty to let the server generate an ID.</span>
                     </label>
 
-                    <div class="split">
-                      <label>
-                        Password
-                        <input
-                          id="passwordInput"
-                          autocomplete="new-password"
-                          type="password"
-                          placeholder="Optional"
-                        />
-                      </label>
-                      <label>
-                        Player name
-                        <input id="playerInput" autocomplete="off" placeholder="Optional callsign" />
-                      </label>
-                    </div>
+                    <label>
+                      Password
+                      <input
+                        id="passwordInput"
+                        autocomplete="new-password"
+                        type="password"
+                        placeholder="Optional"
+                      />
+                    </label>
 
                     <div class="toggle-row setting-row">
                       <div>
@@ -1026,8 +1020,7 @@
         version: undefined,
         health: undefined,
         selectedRoom: undefined,
-        selectedPassword: "",
-        selectedPlayerName: ""
+        selectedPassword: ""
       };
 
       const webGuiBaseStorageKey = "wt8111.cloudWebGuiBaseUrl";
@@ -1104,7 +1097,7 @@
         refreshSelectedMapUrl();
       }
 
-      function webGuiUrl(roomId, password = "", playerName = "") {
+      function webGuiUrl(roomId, password = "") {
         if (!roomId) {
           return "--";
         }
@@ -1119,17 +1112,12 @@
           params.set("password", password);
         }
 
-        if (playerName) {
-          params.set("player", playerName);
-        }
-
         return `${normalizeWebGuiBaseUrl()}?${params.toString()}`;
       }
 
-      function updateLinks(room, password = "", playerName = "") {
+      function updateLinks(room, password = "") {
         state.selectedRoom = room;
         state.selectedPassword = password;
-        state.selectedPlayerName = playerName;
         if (!room) {
           $("relayUrl").textContent = "--";
           $("viewerUrl").textContent = "--";
@@ -1140,7 +1128,7 @@
 
         $("relayUrl").textContent = absoluteWsUrl(room.relay_url ?? `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`);
         $("viewerUrl").textContent = absoluteWsUrl(room.viewer_url ?? `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`);
-        $("webGuiUrl").textContent = webGuiUrl(room.room_id, password, playerName);
+        $("webGuiUrl").textContent = webGuiUrl(room.room_id, password);
         $("openMapButton").disabled = false;
         $("joinRoomInput").value = room.room_id;
         if (password) {
@@ -1156,18 +1144,17 @@
 
         $("webGuiUrl").textContent = webGuiUrl(
           state.selectedRoom.room_id,
-          state.selectedPassword,
-          state.selectedPlayerName
+          state.selectedPassword
         );
       }
 
-      function openTacticalMap(room, password = "", playerName = "") {
+      function openTacticalMap(room, password = "") {
         if (!room?.room_id) {
           setStatus("warning", "No room selected", "Create or select a room before opening the tactical map.");
           return;
         }
 
-        const url = webGuiUrl(room.room_id, password, playerName);
+        const url = webGuiUrl(room.room_id, password);
         window.open(url, "_blank", "noopener,noreferrer");
         setStatus("success", "Opening tactical map", url);
       }
@@ -1227,7 +1214,7 @@
               relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
               viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
             };
-            updateLinks(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
+            updateLinks(detail, $("joinPasswordInput").value.trim());
             setStatus("info", "Room selected", `Selected ${room.room_id}. Copy the Relay URL into the WinUI Sync page.`);
           });
           row.addEventListener("keydown", (event) => {
@@ -1243,8 +1230,8 @@
               relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
               viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
             };
-            updateLinks(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
-            openTacticalMap(detail, $("joinPasswordInput").value.trim(), $("playerInput").value.trim());
+            updateLinks(detail, $("joinPasswordInput").value.trim());
+            openTacticalMap(detail, $("joinPasswordInput").value.trim());
           });
           list.appendChild(row);
         }
@@ -1297,7 +1284,6 @@
         const protectedRoom = $("protectedSwitch").checked;
         const roomId = $("roomIdInput").value.trim();
         const password = protectedRoom ? $("passwordInput").value : "";
-        const playerName = $("playerInput").value.trim();
 
         try {
           setStatus("info", "Creating room", roomId ? `POST /api/rooms for ${roomId}.` : "Requesting generated room ID.");
@@ -1305,12 +1291,11 @@
             method: "POST",
             body: JSON.stringify({
               room_id: roomId || undefined,
-              password: password || undefined,
-              player_name: playerName || undefined
+              password: password || undefined
             })
           });
 
-          updateLinks(room, password, playerName);
+          updateLinks(room, password);
           await refreshAll(false);
           setStatus("success", "Room created", `Room ${room.room_id} is ready. Copy the Relay URL into the WinUI client.`);
         } catch (error) {
@@ -1334,7 +1319,7 @@
             method: "POST",
             body: JSON.stringify({ password })
           });
-          updateLinks(room, password, $("playerInput").value.trim());
+          updateLinks(room, password);
           setStatus("success", "Room accepted", `Room ${room.room_id} accepted viewer and relay access.`);
         } catch (error) {
           setStatus("error", "Join failed", error.message);
@@ -1365,7 +1350,7 @@
       });
       $("webGuiBaseInput").addEventListener("blur", normalizeWebGuiBaseInput);
       $("openMapButton").addEventListener("click", () => {
-        openTacticalMap(state.selectedRoom, state.selectedPassword, state.selectedPlayerName);
+        openTacticalMap(state.selectedRoom, state.selectedPassword);
       });
       $("protectedSwitch").addEventListener("change", (event) => {
         $("passwordInput").disabled = !event.target.checked;

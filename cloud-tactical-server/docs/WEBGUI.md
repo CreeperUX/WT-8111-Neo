@@ -23,6 +23,9 @@ tables.
 - Generate a tactical-map launch URL for the selected room.
 - Open the local/LAN tactical map WebGUI with cloud parameters already applied.
 
+Player names are intentionally not part of this console. They belong to the
+local client relay identity and observation payloads, not cloud room management.
+
 ## Tactical Map Launch
 
 The actual tactical map is still the client WebGUI hosted by the local WT 8111

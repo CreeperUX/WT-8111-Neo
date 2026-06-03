@@ -71,10 +71,12 @@ Create a new room.
 ```json
 {
   "room_id": "alpha-squad",    // optional, auto-generated if omitted
-  "password": "s3cret",        // optional, room is public if omitted
-  "player_name": "Player1"     // optional
+  "password": "s3cret"         // optional, room is public if omitted
 }
 ```
+
+Player names are supplied by relay clients and observation frames. Room
+management does not store or require a player name.
 
 **Response 201:**
 ```json

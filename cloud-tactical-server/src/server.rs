@@ -84,7 +84,6 @@ struct CreateRoomRequest {
     #[serde(default)]
     room_id: Option<String>,
     password: Option<String>,
-    player_name: Option<String>,
 }
 
 #[derive(Serialize)]
