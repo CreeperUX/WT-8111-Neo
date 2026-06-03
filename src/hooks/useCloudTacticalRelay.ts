@@ -85,7 +85,7 @@ export function useCloudTacticalRelay(mapData: WTMapPollSnapshot): CloudTactical
     let seq = 0;
     let sessionId = "";
     let clockOffsetMs = 0;
-    let mapImageUploadComplete = false;
+    let uploadedMapGeneration: number | undefined;
     let mapImageUploadInFlight = false;
     let lastMapImageUploadAttemptAt = 0;
     let nextLocalId = 1;
@@ -120,17 +120,22 @@ export function useCloudTacticalRelay(mapData: WTMapPollSnapshot): CloudTactical
     }
 
     async function uploadMapImageIfNeeded() {
-      if (mapImageUploadComplete || mapImageUploadInFlight || !sessionId) {
-        return;
-      }
-
-      const now = Date.now();
-      if (now - lastMapImageUploadAttemptAt < 5000) {
+      if (mapImageUploadInFlight || !sessionId) {
         return;
       }
 
       const snapshot = latestMapData.current;
       if (!snapshot.ok || !snapshot.mapInfo) {
+        return;
+      }
+
+      const mapGeneration = snapshot.mapInfo.map_generation ?? 0;
+      if (uploadedMapGeneration === mapGeneration) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastMapImageUploadAttemptAt < 5000) {
         return;
       }
 
@@ -147,7 +152,7 @@ export function useCloudTacticalRelay(mapData: WTMapPollSnapshot): CloudTactical
           return;
         }
 
-        mapImageUploadComplete = true;
+        uploadedMapGeneration = result.map_generation;
         setState((previous) => ({
           ...previous,
           mapImageStatus: result.accepted ? "accepted" : "ignored",
@@ -307,7 +312,7 @@ export function useCloudTacticalRelay(mapData: WTMapPollSnapshot): CloudTactical
               clockOffsetMs = message.value.serverTimeMs - Date.now();
             }
             attempt = 0;
-            mapImageUploadComplete = false;
+            uploadedMapGeneration = undefined;
             mapImageUploadInFlight = false;
             lastMapImageUploadAttemptAt = 0;
             setState((previous) => ({
