@@ -1,6 +1,6 @@
 # WT 8111 Neo Cloud Tactical Server — REST API
 
-> **Version:** 0.2.0<br>
+> **Version:** 0.2.1<br>
 > **Protocol Version:** 1<br>
 > **Base URL:** `http://<host>:17712`
 
@@ -34,7 +34,7 @@ Server version and protocol info.
 ```json
 {
   "service": "cloud-tactical-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "protocol_version": 1
 }
 ```

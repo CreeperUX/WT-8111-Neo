@@ -13,7 +13,7 @@ The project is still an early development prototype.
 - Web tactical map workbench built with React, Vite, and TypeScript.
 - Rust local HTTP service built with Axum.
 - WinUI 3 local control console for Windows.
-- Cloud Tactical Server v0.2.0 includes a WinUI-style room-management WebGUI at
+- Cloud Tactical Server v0.2.1 includes a WinUI-style room-management WebGUI at
   `http://<cloud-server>:17712/`, with buttons that open the selected room in
   the local/LAN tactical map Web GUI.
 - The WinUI console is the only app players need to start manually.
