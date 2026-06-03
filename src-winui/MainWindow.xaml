@@ -18,17 +18,139 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TitleBar
-            x:Name="AppTitleBar"
-            Title="WT 8111 Neo Control"
-            BackRequested="TitleBar_BackRequested"
-            IsBackButtonVisible="{x:Bind NavFrame.CanGoBack, Mode=OneWay}"
-            IsPaneToggleButtonVisible="True"
-            PaneToggleRequested="TitleBar_PaneToggleRequested">
-            <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/AppIcon.ico" />
-            </TitleBar.IconSource>
-        </TitleBar>
+        <Grid>
+            <TitleBar
+                x:Name="AppTitleBar"
+                Title="WT 8111 Neo Control"
+                BackRequested="TitleBar_BackRequested"
+                IsBackButtonVisible="{x:Bind NavFrame.CanGoBack, Mode=OneWay}"
+                IsPaneToggleButtonVisible="True"
+                PaneToggleRequested="TitleBar_PaneToggleRequested">
+                <TitleBar.IconSource>
+                    <ImageIconSource ImageSource="Assets/AppIcon.ico" />
+                </TitleBar.IconSource>
+            </TitleBar>
+
+            <Button
+                x:Name="ConnectionStatusButton"
+                MinWidth="180"
+                Height="32"
+                Margin="0,8,132,0"
+                Padding="10,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Click="ConnectionStatusButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon
+                        x:Name="ConnectionStatusGlyph"
+                        FontSize="14"
+                        Glyph="&#xE968;" />
+                    <TextBlock
+                        x:Name="ConnectionStatusText"
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Text="Checking connections" />
+                </StackPanel>
+                <Button.Flyout>
+                    <Flyout Placement="BottomEdgeAlignedRight">
+                        <Grid
+                            Width="360"
+                            RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Text="Connection Status" />
+
+                            <Border
+                                Grid.Row="1"
+                                Padding="12"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6">
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        x:Name="LocalServiceGlyph"
+                                        FontSize="18"
+                                        Glyph="&#xE946;" />
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock
+                                            x:Name="LocalServiceTitle"
+                                            FontWeight="SemiBold"
+                                            Text="Local service" />
+                                        <TextBlock
+                                            x:Name="LocalServiceMessage"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="Not checked yet."
+                                            TextWrapping="WrapWholeWords" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <Border
+                                Grid.Row="2"
+                                Padding="12"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6">
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        x:Name="CloudServiceGlyph"
+                                        FontSize="18"
+                                        Glyph="&#xE968;" />
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <TextBlock
+                                            x:Name="CloudServiceTitle"
+                                            FontWeight="SemiBold"
+                                            Text="Cloud service" />
+                                        <TextBlock
+                                            x:Name="CloudServiceMessage"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="Not checked yet."
+                                            TextWrapping="WrapWholeWords" />
+                                        <TextBlock
+                                            x:Name="CloudServiceDetail"
+                                            FontFamily="Consolas"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            TextWrapping="WrapWholeWords" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel
+                                Grid.Row="3"
+                                HorizontalAlignment="Right"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    Click="RefreshConnections_Click"
+                                    Content="Refresh" />
+                                <Button
+                                    Click="OpenSyncSettings_Click"
+                                    Content="Sync settings" />
+                            </StackPanel>
+                        </Grid>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+        </Grid>
 
         <NavigationView
             x:Name="NavView"

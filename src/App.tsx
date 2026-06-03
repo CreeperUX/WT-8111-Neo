@@ -20,13 +20,17 @@ import {
   ZoomOut
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useCloudTacticalRelay } from "./hooks/useCloudTacticalRelay";
 import { useCloudTacticalViewer } from "./hooks/useCloudTacticalViewer";
 import { useWT8111Map } from "./hooks/useWT8111Map";
 import {
   cloudSnapshotToMapObjects,
+  getCloudRoomMapImageUrl,
   normalizeCloudInterestRegions,
+  readCloudTacticalConfig,
   type CloudFusedSnapshot,
   type CloudInterestOverlay,
+  type CloudRelayStatus,
   type CloudViewerStatus
 } from "./lib/cloudTactical";
 import {
@@ -228,7 +232,7 @@ function formatNumber(value: number | undefined, digits = 0) {
   return value.toFixed(digits);
 }
 
-function formatCloudStatus(status: CloudViewerStatus) {
+function formatCloudStatus(status: CloudViewerStatus | CloudRelayStatus) {
   switch (status) {
     case "disabled":
       return "Cloud Off";
@@ -250,6 +254,12 @@ function formatCloudStatus(status: CloudViewerStatus) {
 function formatTrackConfidence(object: WTMapObject) {
   return typeof object.cloudConfidenceU8 === "number"
     ? `${Math.round((object.cloudConfidenceU8 / 255) * 100)}%`
+    : "--";
+}
+
+function formatMs(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value < 1000 ? Math.round(value) : (value / 1000).toFixed(1)}${value < 1000 ? "ms" : "s"}`
     : "--";
 }
 
@@ -1088,6 +1098,7 @@ const CloudInterestRegionOverlay = memo(function CloudInterestRegionOverlay({
 });
 
 function MapSurface({
+  mapImageUrl,
   mapInfo,
   objects,
   interestRegions,
@@ -1101,6 +1112,7 @@ function MapSurface({
   setTargetRef,
   setMapTarget
 }: {
+  mapImageUrl: string;
   mapInfo?: WTMapInfo;
   objects: WTMapObject[];
   interestRegions: CloudInterestOverlay[];
@@ -1114,7 +1126,6 @@ function MapSurface({
   setTargetRef: (ref: FirePointRef) => void;
   setMapTarget: (point: Pick<MapMarker, "x" | "y">) => void;
 }) {
-  const imageUrl = getMapImageUrl(mapInfo);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const [view, setView] = useState<MapView>({ zoom: 1, panX: 0, panY: 0 });
@@ -1307,7 +1318,7 @@ function MapSurface({
             transform: `translate(${view.panX * 100}%, ${view.panY * 100}%) scale(${view.zoom})`
           }}
         >
-          <img className="map-image" src={imageUrl} alt="" draggable={false} />
+          <img className="map-image" src={mapImageUrl} alt="" draggable={false} />
           <svg className="map-overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
             {GRID_LINES.map((line) => (
               <g key={line}>
@@ -1789,6 +1800,15 @@ function AirTacticalPanel({
   cloudError,
   cloudUpdatedAt,
   cloudEnabled,
+  relayStatus,
+  relayError,
+  relayUploadedSeq,
+  relayLastUploadedAt,
+  relayClockOffsetMs,
+  relayEnabled,
+  relayMapImageStatus,
+  relayMapImageBytes,
+  relayMapImageError,
   hiddenObjectKeys,
   toggleObjectVisibility
 }: {
@@ -1799,6 +1819,15 @@ function AirTacticalPanel({
   cloudError?: string;
   cloudUpdatedAt: number;
   cloudEnabled: boolean;
+  relayStatus: CloudRelayStatus;
+  relayError?: string;
+  relayUploadedSeq: number;
+  relayLastUploadedAt: number;
+  relayClockOffsetMs: number;
+  relayEnabled: boolean;
+  relayMapImageStatus: "pending" | "accepted" | "ignored" | "error";
+  relayMapImageBytes: number;
+  relayMapImageError?: string;
   hiddenObjectKeys: Set<string>;
   toggleObjectVisibility: (key: string) => void;
 }) {
@@ -1838,6 +1867,9 @@ function AirTacticalPanel({
   const cloudSummary = cloudSnapshot?.summary;
   const cloudLastUpdate = cloudUpdatedAt
     ? new Date(cloudUpdatedAt).toLocaleTimeString()
+    : "--";
+  const relayLastUpload = relayLastUploadedAt
+    ? new Date(relayLastUploadedAt).toLocaleTimeString()
     : "--";
 
   return (
@@ -1885,7 +1917,7 @@ function AirTacticalPanel({
         <div className="air-track-head">
           <span>Track</span>
           <span>Side</span>
-          <span>Conf</span>
+          <span>Conf/Src</span>
           <span>Show</span>
         </div>
         <div className="air-track-list">
@@ -1905,7 +1937,9 @@ function AirTacticalPanel({
                 <span className="object-dot" style={{ background: objectColor(object) }} />
                 <span>{objectLabel(object)}</span>
                 <strong>{affiliationTheme[affiliation].label}</strong>
-                <strong>{formatTrackConfidence(object)}</strong>
+                <strong>
+                  {formatTrackConfidence(object)} / {object.cloudContributingClients ?? object.cloudSourceCount ?? "--"}
+                </strong>
                 <button
                   type="button"
                   className={isVisible ? "visibility-button" : "visibility-button hidden"}
@@ -1923,12 +1957,16 @@ function AirTacticalPanel({
       <section className="panel-block">
         <div className="section-title">
           <RadioTower size={18} />
-          Cloud Viewer
+          Cloud Link
         </div>
         <div className="split-notes">
           <div>
-            <strong>{formatCloudStatus(cloudStatus)}</strong>
+            <strong>Viewer {formatCloudStatus(cloudStatus)}</strong>
             <span>{cloudError ?? (cloudEnabled ? "Subscribed to viewer snapshot stream." : "Add cloud query params to subscribe.")}</span>
+          </div>
+          <div>
+            <strong>Relay {formatCloudStatus(relayStatus)}</strong>
+            <span>{relayError ?? (relayEnabled ? `Uploaded seq ${relayUploadedSeq}` : "Relay upload disabled.")}</span>
           </div>
           <div>
             <strong>Room</strong>
@@ -1937,6 +1975,27 @@ function AirTacticalPanel({
           <div>
             <strong>Seq</strong>
             <span>{cloudSnapshot?.seq ?? "--"} / {cloudLastUpdate}</span>
+          </div>
+          <div>
+            <strong>Upload</strong>
+            <span>{relayUploadedSeq ? `${relayUploadedSeq} / ${relayLastUpload}` : "--"}</span>
+          </div>
+          <div>
+            <strong>Map Image</strong>
+            <span>
+              {relayMapImageError ??
+                (relayMapImageStatus === "accepted"
+                  ? `${Math.round(relayMapImageBytes / 1024)} KiB accepted`
+                  : relayMapImageStatus === "ignored"
+                    ? "Room already has image"
+                    : relayEnabled
+                      ? "Waiting to upload"
+                      : "Relay upload disabled.")}
+            </span>
+          </div>
+          <div>
+            <strong>Clock Offset</strong>
+            <span>{formatMs(relayClockOffsetMs)}</span>
           </div>
           <div>
             <strong>Summary</strong>
@@ -1953,8 +2012,11 @@ function AirTacticalPanel({
 }
 
 export default function App() {
-  const mapData = useWT8111Map();
+  const cloudConfig = useMemo(() => readCloudTacticalConfig(), []);
+  const localPollingEnabled = !cloudConfig.viewerEnabled || cloudConfig.relayEnabled;
+  const mapData = useWT8111Map(localPollingEnabled);
   const cloudViewer = useCloudTacticalViewer();
+  const cloudRelay = useCloudTacticalRelay(mapData);
   const [mode, setMode] = useState<WorkbenchMode>("ground");
   const [markers, setMarkers] = useState<MapMarker[]>([]);
   const [objectFilters, setObjectFilters] = useState<Set<Exclude<ObjectFilter, "all">>>(
@@ -1983,8 +2045,29 @@ export default function App() {
     [cloudViewer.snapshot, localPlayer, cloudObjects, localObjects]
   );
   const trackSource = cloudViewer.snapshot ? "cloud" : "local";
+  const displayMapInfo = useMemo<WTMapInfo | undefined>(
+    () =>
+      cloudViewer.snapshot
+        ? {
+            valid: true,
+            map_generation: cloudViewer.snapshot.mapGeneration
+          }
+        : mapData.mapInfo,
+    [cloudViewer.snapshot, mapData.mapInfo]
+  );
+  const mapImageUrl = cloudViewer.snapshot
+    ? getCloudRoomMapImageUrl(
+        cloudViewer.config.serverUrl,
+        cloudViewer.snapshot.roomId,
+        cloudViewer.snapshot.mapGeneration
+      )
+    : getMapImageUrl(mapData.mapInfo);
 
-  const statusText = mapData.ok ? "8111 Map Online" : "8111 Map Offline";
+  const statusText = localPollingEnabled
+    ? mapData.ok
+      ? "8111 Map Online"
+      : "8111 Map Offline"
+    : "Cloud Viewer Only";
   const lastUpdate = mapData.updatedAt
     ? new Date(mapData.updatedAt).toLocaleTimeString()
     : "--";
@@ -2093,7 +2176,9 @@ export default function App() {
               Air
             </button>
           </div>
-          <div className={`status-pill ${mapData.ok ? "online" : "offline"}`}>
+          <div className={`status-pill ${
+            localPollingEnabled ? (mapData.ok ? "online" : "offline") : "neutral"
+          }`}>
             <Activity size={16} />
             {statusText}
           </div>
@@ -2107,7 +2192,19 @@ export default function App() {
             }`}
           >
             <RadioTower size={16} />
-            {formatCloudStatus(cloudViewer.status)}
+            Viewer {formatCloudStatus(cloudViewer.status)}
+          </div>
+          <div
+            className={`status-pill ${
+              cloudRelay.status === "connected"
+                ? "online"
+                : cloudRelay.status === "disabled"
+                  ? "neutral"
+                  : "offline"
+            }`}
+          >
+            <RadioTower size={16} />
+            Relay {formatCloudStatus(cloudRelay.status)}
           </div>
           <div className="status-pill neutral">
             <Activity size={16} />
@@ -2122,7 +2219,8 @@ export default function App() {
 
       <section className="map-layout">
         <MapSurface
-          mapInfo={mapData.mapInfo}
+          mapImageUrl={mapImageUrl}
+          mapInfo={displayMapInfo}
           objects={objects}
           interestRegions={cloudInterestRegions}
           trackSource={trackSource}
@@ -2137,7 +2235,7 @@ export default function App() {
         />
         {mode === "ground" ? (
           <ToolPanel
-            mapInfo={mapData.mapInfo}
+            mapInfo={displayMapInfo}
             objects={objects}
             markers={markers}
             activeMarker={activeMarker}
@@ -2156,20 +2254,29 @@ export default function App() {
           />
         ) : (
           <AirTacticalPanel
-            mapInfo={mapData.mapInfo}
+            mapInfo={displayMapInfo}
             objects={objects}
             cloudSnapshot={cloudViewer.snapshot}
             cloudStatus={cloudViewer.status}
             cloudError={cloudViewer.error}
             cloudUpdatedAt={cloudViewer.updatedAt}
-            cloudEnabled={cloudViewer.config.enabled}
+            cloudEnabled={cloudViewer.config.viewerEnabled}
+            relayStatus={cloudRelay.status}
+            relayError={cloudRelay.error}
+            relayUploadedSeq={cloudRelay.uploadedSeq}
+            relayLastUploadedAt={cloudRelay.lastUploadedAt}
+            relayClockOffsetMs={cloudRelay.clockOffsetMs}
+            relayEnabled={cloudRelay.config.relayEnabled}
+            relayMapImageStatus={cloudRelay.mapImageStatus}
+            relayMapImageBytes={cloudRelay.mapImageBytes}
+            relayMapImageError={cloudRelay.mapImageError}
             hiddenObjectKeys={hiddenObjectKeys}
             toggleObjectVisibility={toggleObjectVisibility}
           />
         )}
       </section>
 
-      {!mapData.ok && (
+      {localPollingEnabled && !mapData.ok && (
         <div className="offline-banner">
           <MousePointer2 size={16} />
           {mapData.error ?? "Waiting for War Thunder 8111 map data"}

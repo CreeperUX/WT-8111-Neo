@@ -23,10 +23,10 @@
             <StackPanel Spacing="6">
                 <TextBlock
                     Style="{StaticResource TitleTextBlockStyle}"
-                    Text="Sync Settings" />
+                    Text="Cloud Room Management" />
                 <TextBlock
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Local-only settings for future tactical relay and squad situation aggregation." />
+                    Text="Paste the Relay URL from the Cloud Tactical Server room panel." />
             </StackPanel>
 
             <Border
@@ -45,27 +45,147 @@
 
                     <TextBox
                         x:Name="ServerUrlBox"
-                        Header="Server address"
-                        PlaceholderText="https://example.com/wt8111" />
+                        Header="Relay URL"
+                        PlaceholderText="ws://192.168.5.182:17712/ws/rooms/test/relay"
+                        TextChanged="ConnectionField_TextChanged" />
 
                     <TextBox
-                        x:Name="PlayerNameBox"
-                        Header="Player name"
-                        PlaceholderText="Callsign shown to the squad server" />
+                        x:Name="RoomIdBox"
+                        Header="Room ID (parsed)"
+                        IsReadOnly="True"
+                        PlaceholderText="Parsed from Relay URL" />
 
                     <PasswordBox
                         x:Name="AccessPasswordBox"
-                        Header="Access password"
-                        PlaceholderText="Stored locally in the portable settings file for now" />
+                        Header="Password (optional)"
+                        PlaceholderText="Leave empty for a public room" />
+
+                    <TextBox
+                        x:Name="PlayerNameBox"
+                        Header="Player name (optional)"
+                        PlaceholderText="Callsign used in relay observation frames" />
+
+                    <Border
+                        Padding="14"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <Grid RowSpacing="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="112" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="Server" />
+                            <TextBlock
+                                x:Name="RelayUrlText"
+                                Grid.Column="1"
+                                FontFamily="Consolas"
+                                TextWrapping="WrapWholeWords" />
+
+                            <TextBlock
+                                Grid.Row="1"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="Viewer URL" />
+                            <TextBlock
+                                x:Name="ViewerUrlText"
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                FontFamily="Consolas"
+                                TextWrapping="WrapWholeWords" />
+
+                            <TextBlock
+                                Grid.Row="2"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="Web GUI" />
+                            <TextBlock
+                                x:Name="WebGuiUrlText"
+                                Grid.Row="2"
+                                Grid.Column="1"
+                                FontFamily="Consolas"
+                                TextWrapping="WrapWholeWords" />
+                        </Grid>
+                    </Border>
 
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <Button
                             Click="SaveSettings_Click"
                             Content="Save settings" />
                         <Button
+                            Click="TestServer_Click"
+                            Content="Test server" />
+                        <Button
+                            Click="JoinRoom_Click"
+                            Content="Join room" />
+                        <Button
+                            Click="RefreshRooms_Click"
+                            Content="Refresh rooms" />
+                        <Button
                             Click="ResetSettings_Click"
                             Content="Reset form" />
                     </StackPanel>
+
+                    <Border
+                        Padding="14"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon
+                                x:Name="CloudStatusIcon"
+                                FontSize="20"
+                                Glyph="&#xE968;" />
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock
+                                    x:Name="CloudStatusTitle"
+                                    FontWeight="SemiBold"
+                                    Text="Cloud status not checked" />
+                                <TextBlock
+                                    x:Name="CloudStatusMessage"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="Paste Relay URL, then test or join the room."
+                                    TextWrapping="WrapWholeWords" />
+                                <TextBlock
+                                    x:Name="CloudStatusDetail"
+                                    FontFamily="Consolas"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border
+                        Padding="14"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="10">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="Active Rooms" />
+                            <ListView
+                                x:Name="ActiveRoomsList"
+                                MaxHeight="180" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 
@@ -76,7 +196,7 @@
                 IsOpen="False"
                 Severity="Informational"
                 Title="Storage note"
-                Message="These controls are the intended home for sensitive local settings. The backing configuration writer will be connected after the relay protocol is finalized." />
+                Message="The client stores the Relay URL-derived server and room, plus the optional room password and player name." />
         </Grid>
     </ScrollViewer>
 </Page>

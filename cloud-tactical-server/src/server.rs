@@ -15,6 +15,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::rooms::{MapImage, RoomError, RoomManager};
 
 const CLOUD_WEBGUI_HTML: &str = include_str!("../webgui/index.html");
+const CLOUD_MAP_HTML: &str = include_str!("../webgui/map.html");
 
 pub struct AppState {
     pub rooms: Arc<Mutex<RoomManager>>,
@@ -29,6 +30,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(web_gui))
         .route("/rooms", get(web_gui))
+        .route("/map", get(cloud_map))
         .route("/healthz", get(healthz))
         .route("/version", get(version))
         .route("/api/rooms", get(list_rooms).post(create_room))
@@ -59,6 +61,15 @@ async fn web_gui() -> Response {
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::from(CLOUD_WEBGUI_HTML))
         .expect("failed to build Web GUI response")
+}
+
+async fn cloud_map() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(CLOUD_MAP_HTML))
+        .expect("failed to build cloud map response")
 }
 
 async fn healthz(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {

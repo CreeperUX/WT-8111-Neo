@@ -55,6 +55,17 @@ export interface WTMapObject {
   sy?: number;
   ex?: number;
   ey?: number;
+  cloudTrackId?: string;
+  cloudLabel?: string;
+  cloudClassId?: number;
+  cloudAffiliation?: "friend" | "hostile" | "neutral" | "unknown";
+  cloudConfidenceU8?: number;
+  cloudLastSeenMsAgo?: number;
+  cloudSourceCount?: number;
+  cloudTotalAgeMs?: number;
+  cloudContributingClients?: number;
+  cloudFlags?: number;
+  cloudSnapshotSeq?: number;
   [key: string]: unknown;
 }
 

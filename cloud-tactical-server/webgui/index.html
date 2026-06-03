@@ -838,10 +838,10 @@
                         <input
                           id="webGuiBaseInput"
                           autocomplete="url"
-                          placeholder="http://127.0.0.1:17711"
-                          value="http://127.0.0.1:17711"
+                          placeholder="/map"
+                          value="/map"
                         />
-                        <span class="hint">Use the game PC LAN address for tablets or other devices.</span>
+                        <span class="hint">Default uses this cloud server's viewer map. You can still enter a game PC 17711 URL for local relay mode.</span>
                       </label>
                       <div class="actions">
                         <button id="openMapButton" class="command primary" type="button" disabled>
@@ -894,7 +894,7 @@
                   </div>
 
                   <div class="small-note">
-                    The Web GUI URL targets the local WT 8111 Neo service on port 17711 and passes this cloud server as query parameters.
+                    The default Web GUI URL opens the cloud-hosted viewer map and passes this room as query parameters.
                   </div>
                 </section>
 
@@ -991,7 +991,7 @@
         selectedPassword: ""
       };
 
-      const webGuiBaseStorageKey = "wt8111.cloudWebGuiBaseUrl";
+      const webGuiBaseStorageKey = "wt8111.cloudTacticalMapBaseUrl";
 
       const icons = {
         info: '<circle cx="12" cy="12" r="9" /><path d="M12 8v4" /><path d="M12 16h.01" />',
@@ -1051,11 +1051,18 @@
       }
 
       function normalizeWebGuiBaseUrl() {
-        const value = $("webGuiBaseInput").value.trim() || "http://127.0.0.1:17711";
+        let value = $("webGuiBaseInput").value.trim() || "/map";
+        if (
+          value &&
+          !value.startsWith("/") &&
+          !/^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+        ) {
+          value = `http://${value}`;
+        }
         try {
-          return new URL(value).toString().replace(/\/$/, "");
+          return new URL(value, window.location.origin).toString().replace(/\/$/, "");
         } catch {
-          return "http://127.0.0.1:17711";
+          return absoluteHttpUrl("/map").replace(/\/$/, "");
         }
       }
 
@@ -1071,7 +1078,7 @@
         }
 
         const params = new URLSearchParams({
-          cloud: "both",
+          cloud: "viewer",
           server: window.location.origin,
           room: roomId
         });

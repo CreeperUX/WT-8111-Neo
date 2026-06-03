@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   decodeCloudWsSnapshot,
+  fetchCloudTacticalVersion,
   joinCloudTacticalRoom,
   readCloudTacticalConfig,
   resolveCloudWebSocketUrl,
@@ -21,12 +22,12 @@ export function useCloudTacticalViewer(): CloudTacticalViewerState {
   const config = useMemo(() => readCloudTacticalConfig(), []);
   const [state, setState] = useState<CloudTacticalViewerState>({
     config,
-    status: config.enabled ? "joining" : "disabled",
+    status: config.viewerEnabled ? "joining" : "disabled",
     updatedAt: 0
   });
 
   useEffect(() => {
-    if (!config.enabled) {
+    if (!config.viewerEnabled) {
       return;
     }
 
@@ -46,6 +47,7 @@ export function useCloudTacticalViewer(): CloudTacticalViewerState {
           error: undefined
         }));
 
+        await fetchCloudTacticalVersion(config.serverUrl, controller.signal);
         const join = await joinCloudTacticalRoom(config, controller.signal);
         if (disposed) {
           return;

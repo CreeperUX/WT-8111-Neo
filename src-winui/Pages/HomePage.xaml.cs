@@ -18,7 +18,7 @@ public sealed partial class HomePage : Page
     private async void OpenWebGui_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         await App.ServiceHost.StartAsync();
-        await Launcher.LaunchUriAsync(new Uri(ServiceHost.LocalWebGuiUrl));
+        await Launcher.LaunchUriAsync(new Uri(ServiceHost.GetConfiguredWebGuiUrl()));
     }
 
     private async void CheckService_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
@@ -35,7 +35,7 @@ public sealed partial class HomePage : Page
     private void CopyLocalUrl_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
         var package = new DataPackage();
-        package.SetText(ServiceHost.LocalWebGuiUrl);
+        package.SetText(ServiceHost.GetConfiguredWebGuiUrl());
         Clipboard.SetContent(package);
     }
 }

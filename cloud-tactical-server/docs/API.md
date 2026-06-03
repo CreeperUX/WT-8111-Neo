@@ -1,12 +1,12 @@
 # WT 8111 Neo Cloud Tactical Server — REST API
 
-> **Version:** 0.2.1<br>
+> **Version:** 0.2.2<br>
 > **Protocol Version:** 1<br>
 > **Base URL:** `http://<host>:17712`
 
 ## Overview
 
-The Cloud Tactical Server provides room management and real-time tactical data fusion for WT 8111 Neo. It also serves a lightweight room-management WebGUI at `/` and `/rooms`. All REST endpoints return JSON. WebSocket endpoints use Protobuf binary frames (see [PROTOCOL.md](PROTOCOL.md)).
+The Cloud Tactical Server provides room management and real-time tactical data fusion for WT 8111 Neo. It also serves a lightweight room-management WebGUI at `/` and `/rooms`, plus a cloud-hosted tactical viewer at `/map`. All REST endpoints return JSON. WebSocket endpoints use Protobuf binary frames (see [PROTOCOL.md](PROTOCOL.md)).
 
 ## Endpoints
 
@@ -34,7 +34,7 @@ Server version and protocol info.
 ```json
 {
   "service": "cloud-tactical-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "protocol_version": 1
 }
 ```
@@ -45,19 +45,27 @@ Server version and protocol info.
 
 #### `GET /`
 
-Serves the Cloud Room Management console. The page matches the WinUI control-console style and calls the REST endpoints below to create rooms, refresh active rooms, copy relay/viewer links, and open the local tactical map WebGUI for a selected room.
+Serves the Cloud Room Management console. The page matches the WinUI control-console style and calls the REST endpoints below to create rooms, refresh active rooms, copy relay/viewer links, and open the cloud tactical viewer for a selected room.
 
 #### `GET /rooms`
 
 Alias for `/`.
 
-The tactical map launch URL defaults to `http://127.0.0.1:17711` and is generated as:
+#### `GET /map`
+
+Serves a cloud-hosted tactical viewer map. It joins the room as a viewer, reads
+snapshots from `/ws/rooms/{room_id}/viewer`, and loads the uploaded room map
+image from `/api/rooms/{room_id}/map-image`.
+
+The room-management launch URL defaults to `/map` and is generated as:
 
 ```text
-http://127.0.0.1:17711?cloud=both&server=<cloud-server-origin>&room=<room-id>
+http://<cloud-server>:17712/map?cloud=viewer&server=<cloud-server-origin>&room=<room-id>
 ```
 
-For tablets or other LAN devices, change the base URL in the console to the game PC address, for example `http://192.168.1.20:17711`.
+For the full local workbench viewer, change the base URL in the console to the
+game PC address, for example `http://192.168.1.20:17711`. Relay upload is still
+configured and run from the local WinUI client.
 
 ---
 

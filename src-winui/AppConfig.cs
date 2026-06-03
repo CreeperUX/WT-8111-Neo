@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -49,6 +50,7 @@ public sealed class RelayConfig
 {
     public bool Enabled { get; set; }
     public string ServerUrl { get; set; } = string.Empty;
+    public string RoomId { get; set; } = string.Empty;
     public string PlayerName { get; set; } = string.Empty;
     public string AccessPassword { get; set; } = string.Empty;
 }
@@ -57,4 +59,9 @@ public sealed class RelayConfig
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     WriteIndented = true)]
 [JsonSerializable(typeof(AppConfig))]
+[JsonSerializable(typeof(CloudVersionResponse))]
+[JsonSerializable(typeof(CloudCreateRoomRequest))]
+[JsonSerializable(typeof(CloudJoinRoomRequest))]
+[JsonSerializable(typeof(CloudJoinResponse))]
+[JsonSerializable(typeof(List<CloudRoomSummary>))]
 internal sealed partial class AppConfigJsonContext : JsonSerializerContext;

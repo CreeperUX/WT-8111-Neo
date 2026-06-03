@@ -111,6 +111,7 @@ npm.cmd run service:build
 
 ## 文档
 
+- [当前原理结构描述图](CURRENT_ARCHITECTURE.zh-CN.md)
 - [War Thunder 8111 API Reference](WT_8111_API_REFERENCE.md)
 - [War Thunder 8111 API Reference zh-CN](WT_8111_API_REFERENCE.zh-CN.md)
 - [本地服务与原生采集开发记录 zh-CN](NATIVE_CAPTURE_PIPELINE.zh-CN.md)

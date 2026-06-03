@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WT 8111 Neo Tactical Map</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #111318;
+        --panel: #1a1e25;
+        --panel-soft: #222833;
+        --border: #343b48;
+        --text: #f3f6fb;
+        --muted: #aeb7c6;
+        --accent: #6ad4ff;
+        --ok: #5be28f;
+        --warn: #ffd166;
+        --bad: #ff6b6b;
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        overflow: hidden;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .topbar {
+        height: 66px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        background: #151920;
+      }
+
+      .brand {
+        min-width: 0;
+      }
+
+      .brand small {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 650;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill {
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .pill.ok {
+        color: var(--ok);
+      }
+
+      .pill.warn {
+        color: var(--warn);
+      }
+
+      .pill.bad {
+        color: var(--bad);
+      }
+
+      .layout {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+      }
+
+      .map-shell {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+      }
+
+      .map-frame {
+        position: relative;
+        width: clamp(360px, min(calc(100vw - 388px), calc(100vh - 98px)), 1080px);
+        height: clamp(360px, min(calc(100vw - 388px), calc(100vh - 98px)), 1080px);
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+          #232832;
+        background-size: 12.5% 12.5%;
+        border: 1px solid var(--border);
+        overflow: hidden;
+      }
+
+      .map-image,
+      .map-overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .map-image {
+        object-fit: cover;
+        opacity: 0.82;
+      }
+
+      .map-image.hidden {
+        display: none;
+      }
+
+      .map-overlay {
+        pointer-events: none;
+      }
+
+      .grid-line {
+        stroke: rgba(255, 255, 255, 0.2);
+        stroke-width: 0.0012;
+      }
+
+      .track-label {
+        fill: #f7fbff;
+        paint-order: stroke;
+        stroke: rgba(0, 0, 0, 0.82);
+        stroke-width: 0.006px;
+        font-size: 0.021px;
+        font-weight: 700;
+        text-anchor: middle;
+        dominant-baseline: hanging;
+      }
+
+      .track-stale {
+        opacity: 0.52;
+      }
+
+      .roi-line {
+        stroke: rgba(255, 209, 102, 0.65);
+        stroke-width: 0.002;
+        stroke-dasharray: 0.01 0.008;
+      }
+
+      .roi-ellipse {
+        fill: rgba(255, 209, 102, 0.09);
+        stroke: rgba(255, 209, 102, 0.9);
+        stroke-width: 0.0025;
+      }
+
+      .side {
+        min-height: 0;
+        overflow: auto;
+        border-left: 1px solid var(--border);
+        background: #151920;
+        padding: 16px;
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+
+      .form {
+        display: grid;
+        gap: 10px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      input {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #10141b;
+        color: var(--text);
+        padding: 9px 10px;
+      }
+
+      .command-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .command {
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel-soft);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .command.primary {
+        flex: 1;
+        border-color: #2584a9;
+        background: #106080;
+      }
+
+      .command svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .kv {
+        display: grid;
+        gap: 8px;
+      }
+
+      .kv div {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+      }
+
+      .kv span {
+        color: var(--muted);
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+
+      .tracks {
+        display: grid;
+        gap: 8px;
+      }
+
+      .track-row {
+        display: grid;
+        grid-template-columns: 12px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #11161e;
+        font-size: 13px;
+      }
+
+      .track-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .track-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .track-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .message {
+        position: absolute;
+        left: 20px;
+        right: 20px;
+        bottom: 20px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(17, 19, 24, 0.88);
+        color: var(--muted);
+        backdrop-filter: blur(10px);
+      }
+
+      @media (max-width: 980px) {
+        body {
+          overflow: auto;
+        }
+
+        .topbar {
+          height: auto;
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .status-row {
+          justify-content: flex-start;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .map-shell {
+          padding: 10px;
+        }
+
+        .map-frame {
+          width: clamp(300px, min(100vw - 20px, 100vh - 220px), 720px);
+          height: clamp(300px, min(100vw - 20px, 100vh - 220px), 720px);
+        }
+
+        .side {
+          border-left: 0;
+          border-top: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <small>WT 8111 Neo</small>
+          <h1 id="title">Cloud Tactical Map</h1>
+        </div>
+        <div class="status-row">
+          <div id="connectionPill" class="pill warn">Connecting</div>
+          <div id="mapPill" class="pill warn">Map image pending</div>
+          <div id="trackPill" class="pill">0 tracks</div>
+        </div>
+      </header>
+
+      <section class="layout">
+        <section class="map-shell" aria-label="Tactical map">
+          <div class="map-frame">
+            <img id="mapImage" class="map-image hidden" alt="" draggable="false" />
+            <svg id="mapOverlay" class="map-overlay" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+            <div id="mapMessage" class="message">Waiting for room data.</div>
+          </div>
+        </section>
+
+        <aside class="side" aria-label="Room information">
+          <section class="card">
+            <h2>Room</h2>
+            <form id="joinForm" class="form">
+              <label>
+                Room ID
+                <input id="roomInput" autocomplete="off" />
+              </label>
+              <label>
+                Password
+                <input id="passwordInput" autocomplete="current-password" type="password" />
+              </label>
+              <div class="command-row">
+                <button class="command primary" type="submit">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                  Join
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="card">
+            <h2>Status</h2>
+            <div class="kv">
+              <div><strong>Cloud Server</strong><span id="serverValue">--</span></div>
+              <div><strong>Room</strong><span id="roomValue">--</span></div>
+              <div><strong>Snapshot</strong><span id="snapshotValue">--</span></div>
+              <div><strong>Generation</strong><span id="generationValue">--</span></div>
+              <div><strong>ROI</strong><span id="roiValue">--</span></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Tracks</h2>
+            <div id="trackList" class="tracks"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const U16_MAX = 65535;
+      const decoder = new TextDecoder();
+      const params = new URLSearchParams(window.location.search);
+      const state = {
+        serverUrl: (params.get("server") || params.get("cloudServer") || window.location.origin).replace(/\/+$/, ""),
+        roomId: params.get("room") || params.get("cloudRoom") || "",
+        password: params.get("password") || params.get("cloudPassword") || "",
+        socket: undefined,
+        reconnectTimer: undefined,
+        attempt: 0,
+        snapshot: undefined,
+        mapGeneration: undefined,
+        lastMapImageAttemptAt: 0,
+        mapOk: false
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      $("roomInput").value = state.roomId;
+      $("passwordInput").value = state.password;
+      $("serverValue").textContent = state.serverUrl;
+
+      class ProtoReader {
+        constructor(bytes) {
+          this.bytes = bytes;
+          this.offset = 0;
+        }
+
+        get done() {
+          return this.offset >= this.bytes.length;
+        }
+
+        readTag() {
+          if (this.done) {
+            return undefined;
+          }
+
+          const key = Number(this.readVarintBigInt());
+          return {
+            field: key >>> 3,
+            wire: key & 7
+          };
+        }
+
+        readVarintNumber() {
+          return Number(this.readVarintBigInt());
+        }
+
+        readVarintBigInt() {
+          let result = 0n;
+          let shift = 0n;
+
+          while (this.offset < this.bytes.length) {
+            const byte = this.bytes[this.offset++];
+            result |= BigInt(byte & 0x7f) << shift;
+            if ((byte & 0x80) === 0) {
+              return result;
+            }
+
+            shift += 7n;
+            if (shift > 70n) {
+              throw new Error("Invalid protobuf varint");
+            }
+          }
+
+          throw new Error("Unexpected end of protobuf varint");
+        }
+
+        readLengthDelimited() {
+          const length = this.readVarintNumber();
+          const end = this.offset + length;
+          if (length < 0 || end > this.bytes.length) {
+            throw new Error("Invalid protobuf length-delimited field");
+          }
+
+          const value = this.bytes.subarray(this.offset, end);
+          this.offset = end;
+          return value;
+        }
+
+        readString() {
+          return decoder.decode(this.readLengthDelimited());
+        }
+
+        skip(wire) {
+          if (wire === 0) {
+            this.readVarintBigInt();
+            return;
+          }
+          if (wire === 1) {
+            this.offset += 8;
+          } else if (wire === 2) {
+            this.readLengthDelimited();
+            return;
+          } else if (wire === 5) {
+            this.offset += 4;
+          } else {
+            throw new Error(`Unsupported protobuf wire type ${wire}`);
+          }
+
+          if (this.offset > this.bytes.length) {
+            throw new Error("Unexpected end of protobuf field");
+          }
+        }
+      }
+
+      function readStringField(reader, wire) {
+        if (wire !== 2) {
+          reader.skip(wire);
+          return "";
+        }
+        return reader.readString();
+      }
+
+      function readUintField(reader, wire) {
+        if (wire !== 0) {
+          reader.skip(wire);
+          return 0;
+        }
+        return reader.readVarintNumber();
+      }
+
+      function readInt32Field(reader, wire) {
+        if (wire !== 0) {
+          reader.skip(wire);
+          return 0;
+        }
+        const value = reader.readVarintBigInt();
+        const low32 = Number(value & 0xffffffffn);
+        return low32 >= 0x80000000 ? low32 - 0x100000000 : low32;
+      }
+
+      function decodeTrack(bytes) {
+        const reader = new ProtoReader(bytes);
+        const track = {
+          trackId: "",
+          labelId: 0,
+          classId: 4,
+          affiliation: 3,
+          xU16: 0,
+          yU16: 0,
+          headingI16: 0,
+          vxI16: 0,
+          vyI16: 0,
+          confidenceU8: 0,
+          lastSeenMsAgo: 0,
+          sourceCount: 0,
+          flags: 0
+        };
+
+        while (!reader.done) {
+          const tag = reader.readTag();
+          if (!tag) break;
+
+          switch (tag.field) {
+            case 1:
+              track.trackId = readStringField(reader, tag.wire);
+              break;
+            case 2:
+              track.labelId = readUintField(reader, tag.wire);
+              break;
+            case 3:
+              track.classId = readUintField(reader, tag.wire);
+              break;
+            case 4:
+              track.affiliation = readUintField(reader, tag.wire);
+              break;
+            case 5:
+              track.xU16 = readUintField(reader, tag.wire);
+              break;
+            case 6:
+              track.yU16 = readUintField(reader, tag.wire);
+              break;
+            case 7:
+              track.headingI16 = readInt32Field(reader, tag.wire);
+              break;
+            case 8:
+              track.vxI16 = readInt32Field(reader, tag.wire);
+              break;
+            case 9:
+              track.vyI16 = readInt32Field(reader, tag.wire);
+              break;
+            case 10:
+              track.confidenceU8 = readUintField(reader, tag.wire);
+              break;
+            case 11:
+              track.lastSeenMsAgo = readUintField(reader, tag.wire);
+              break;
+            case 12:
+              track.sourceCount = readUintField(reader, tag.wire);
+              break;
+            case 13:
+              track.flags = readUintField(reader, tag.wire);
+              break;
+            default:
+              reader.skip(tag.wire);
+          }
+        }
+
+        return track;
+      }
+
+      function decodeRoi(bytes) {
+        const reader = new ProtoReader(bytes);
+        const roi = {
+          trackId: "",
+          centerXU16: 0,
+          centerYU16: 0,
+          anchorXU16: 0,
+          anchorYU16: 0,
+          radiusMajorU16: 0,
+          radiusMinorU16: 0,
+          headingI16: 0,
+          expiresInMs: 0,
+          confidenceU8: 0
+        };
+
+        while (!reader.done) {
+          const tag = reader.readTag();
+          if (!tag) break;
+
+          switch (tag.field) {
+            case 1:
+              roi.trackId = readStringField(reader, tag.wire);
+              break;
+            case 2:
+              roi.centerXU16 = readUintField(reader, tag.wire);
+              break;
+            case 3:
+              roi.centerYU16 = readUintField(reader, tag.wire);
+              break;
+            case 4:
+              roi.anchorXU16 = readUintField(reader, tag.wire);
+              break;
+            case 5:
+              roi.anchorYU16 = readUintField(reader, tag.wire);
+              break;
+            case 6:
+              roi.radiusMajorU16 = readUintField(reader, tag.wire);
+              break;
+            case 7:
+              roi.radiusMinorU16 = readUintField(reader, tag.wire);
+              break;
+            case 8:
+              roi.headingI16 = readInt32Field(reader, tag.wire);
+              break;
+            case 9:
+              roi.expiresInMs = readUintField(reader, tag.wire);
+              break;
+            case 10:
+              roi.confidenceU8 = readUintField(reader, tag.wire);
+              break;
+            default:
+              reader.skip(tag.wire);
+          }
+        }
+
+        return roi;
+      }
+
+      function decodeSummary(bytes) {
+        const reader = new ProtoReader(bytes);
+        const summary = {
+          totalTracks: 0,
+          hostileTracks: 0,
+          friendlyTracks: 0,
+          staleTracks: 0,
+          interestRegions: 0
+        };
+
+        while (!reader.done) {
+          const tag = reader.readTag();
+          if (!tag) break;
+
+          switch (tag.field) {
+            case 1:
+              summary.totalTracks = readUintField(reader, tag.wire);
+              break;
+            case 2:
+              summary.hostileTracks = readUintField(reader, tag.wire);
+              break;
+            case 3:
+              summary.friendlyTracks = readUintField(reader, tag.wire);
+              break;
+            case 4:
+              summary.staleTracks = readUintField(reader, tag.wire);
+              break;
+            case 5:
+              summary.interestRegions = readUintField(reader, tag.wire);
+              break;
+            default:
+              reader.skip(tag.wire);
+          }
+        }
+
+        return summary;
+      }
+
+      function decodeSnapshot(bytes) {
+        const reader = new ProtoReader(bytes);
+        const snapshot = {
+          protocolVersion: 0,
+          roomId: "",
+          seq: 0,
+          serverTimeMs: 0,
+          mapGeneration: 0,
+          tracks: [],
+          interestRegions: [],
+          summary: undefined
+        };
+
+        while (!reader.done) {
+          const tag = reader.readTag();
+          if (!tag) break;
+
+          switch (tag.field) {
+            case 1:
+              snapshot.protocolVersion = readUintField(reader, tag.wire);
+              break;
+            case 2:
+              snapshot.roomId = readStringField(reader, tag.wire);
+              break;
+            case 3:
+              snapshot.seq = readUintField(reader, tag.wire);
+              break;
+            case 4:
+              snapshot.serverTimeMs = readUintField(reader, tag.wire);
+              break;
+            case 5:
+              snapshot.mapGeneration = readUintField(reader, tag.wire);
+              break;
+            case 6:
+              snapshot.tracks.push(decodeTrack(reader.readLengthDelimited()));
+              break;
+            case 7:
+              snapshot.interestRegions.push(decodeRoi(reader.readLengthDelimited()));
+              break;
+            case 8:
+              snapshot.summary = decodeSummary(reader.readLengthDelimited());
+              break;
+            default:
+              reader.skip(tag.wire);
+          }
+        }
+
+        return snapshot;
+      }
+
+      function decodeEnvelope(arrayBuffer) {
+        const reader = new ProtoReader(new Uint8Array(arrayBuffer));
+
+        while (!reader.done) {
+          const tag = reader.readTag();
+          if (!tag) break;
+
+          if (tag.field === 2 && tag.wire === 2) {
+            return decodeSnapshot(reader.readLengthDelimited());
+          }
+
+          reader.skip(tag.wire);
+        }
+
+        return undefined;
+      }
+
+      function wsUrl(path) {
+        const url = new URL(path, `${state.serverUrl}/`);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        return url.toString();
+      }
+
+      function apiUrl(path) {
+        return new URL(path, `${state.serverUrl}/`).toString();
+      }
+
+      function setPill(id, kind, text) {
+        const pill = $(id);
+        pill.className = `pill ${kind || ""}`.trim();
+        pill.textContent = text;
+      }
+
+      function setMessage(text) {
+        $("mapMessage").textContent = text;
+        $("mapMessage").style.display = text ? "block" : "none";
+      }
+
+      function formatAge(ms) {
+        if (!ms) return "--";
+        const delta = Math.max(0, Date.now() - ms);
+        return delta < 1000 ? `${delta}ms` : `${(delta / 1000).toFixed(1)}s`;
+      }
+
+      function unit(value) {
+        return Math.max(0, Math.min(1, value / U16_MAX));
+      }
+
+      function trackColor(track) {
+        if (track.affiliation === 0) return "#31dfff";
+        if (track.affiliation === 1) return "#ff6358";
+        if (track.affiliation === 2) return "#93e979";
+        return "#ffd25f";
+      }
+
+      function trackLabel(track) {
+        if (track.classId === 0) return "AIR";
+        if (track.classId === 1) return "GND";
+        if (track.classId === 2) return "OBJ";
+        if (track.classId === 3) return "SPN";
+        return "UNK";
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function symbolMarkup(track) {
+        const x = unit(track.xU16);
+        const y = unit(track.yU16);
+        const color = trackColor(track);
+        const label = trackLabel(track);
+        const staleClass = track.confidenceU8 < 90 ? " track-stale" : "";
+        const heading = track.headingI16 / 100;
+        const frame =
+          track.affiliation === 1
+            ? `<polygon points="0,-0.021 0.018,0 0,0.021 -0.018,0" fill="${color}" stroke="#081014" stroke-width="0.0025" vector-effect="non-scaling-stroke" />`
+            : `<rect x="-0.018" y="-0.012" width="0.036" height="0.024" rx="0.003" fill="${color}" stroke="#081014" stroke-width="0.0025" vector-effect="non-scaling-stroke" />`;
+        const glyph =
+          track.classId === 0
+            ? `<path d="M 0 -0.012 L 0.008 0.01 L 0 0.005 L -0.008 0.01 Z" fill="none" stroke="#081014" stroke-width="0.002" vector-effect="non-scaling-stroke" />`
+            : `<circle cx="0" cy="0" r="0.0055" fill="none" stroke="#081014" stroke-width="0.002" vector-effect="non-scaling-stroke" />`;
+
+        return `
+          <g class="track${staleClass}" transform="translate(${x} ${y})">
+            ${frame}
+            <g transform="rotate(${heading})">${glyph}</g>
+            <text class="track-label" x="0" y="0.024">${label}</text>
+          </g>
+        `;
+      }
+
+      function roiMarkup(roi) {
+        const cx = unit(roi.centerXU16);
+        const cy = unit(roi.centerYU16);
+        const ax = unit(roi.anchorXU16);
+        const ay = unit(roi.anchorYU16);
+        const rx = Math.max(unit(roi.radiusMajorU16), 0.012);
+        const ry = Math.max(unit(roi.radiusMinorU16), 0.008);
+        const heading = roi.headingI16 / 100 - 90;
+
+        return `
+          <g>
+            <line x1="${ax}" y1="${ay}" x2="${cx}" y2="${cy}" class="roi-line" vector-effect="non-scaling-stroke" />
+            <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" class="roi-ellipse" transform="rotate(${heading} ${cx} ${cy})" vector-effect="non-scaling-stroke" />
+          </g>
+        `;
+      }
+
+      function updateMapImage(roomId, generation) {
+        const now = Date.now();
+        if (
+          !roomId ||
+          (state.mapGeneration === generation && (state.mapOk || now - state.lastMapImageAttemptAt < 5000))
+        ) {
+          return;
+        }
+
+        state.mapGeneration = generation;
+        state.lastMapImageAttemptAt = now;
+        state.mapOk = false;
+        setPill("mapPill", "warn", "Loading map image");
+        const image = $("mapImage");
+        image.classList.add("hidden");
+        image.onload = () => {
+          state.mapOk = true;
+          image.classList.remove("hidden");
+          setPill("mapPill", "ok", `Map gen ${generation}`);
+        };
+        image.onerror = () => {
+          state.mapOk = false;
+          image.classList.add("hidden");
+          setPill("mapPill", "warn", "Map image pending");
+        };
+        image.src = apiUrl(`/api/rooms/${encodeURIComponent(roomId)}/map-image?gen=${generation}&t=${Date.now()}`);
+      }
+
+      function render(snapshot) {
+        state.snapshot = snapshot;
+        const tracks = snapshot.tracks || [];
+        const rois = snapshot.interestRegions || [];
+        const grid = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1]
+          .map((line) => `<line x1="${line}" y1="0" x2="${line}" y2="1" class="grid-line" /><line x1="0" y1="${line}" x2="1" y2="${line}" class="grid-line" />`)
+          .join("");
+
+        $("mapOverlay").innerHTML = `${grid}${rois.map(roiMarkup).join("")}${tracks.map(symbolMarkup).join("")}`;
+        $("title").textContent = `Cloud Tactical Map - ${snapshot.roomId}`;
+        $("roomValue").textContent = snapshot.roomId;
+        $("snapshotValue").textContent = `#${snapshot.seq} (${formatAge(snapshot.serverTimeMs)})`;
+        $("generationValue").textContent = snapshot.mapGeneration;
+        $("roiValue").textContent = rois.length;
+        setPill("trackPill", "", `${tracks.length} tracks`);
+        updateMapImage(snapshot.roomId, snapshot.mapGeneration);
+        setMessage(tracks.length ? "" : "Connected. Waiting for relay observations.");
+
+        $("trackList").innerHTML = tracks
+          .slice()
+          .sort((left, right) => right.confidenceU8 - left.confidenceU8)
+          .slice(0, 24)
+          .map((track) => `
+            <div class="track-row">
+              <span class="track-dot" style="background:${trackColor(track)}"></span>
+              <strong title="${escapeHtml(track.trackId)}">${trackLabel(track)} ${escapeHtml(track.trackId || "track")}</strong>
+              <span>${Math.round((track.confidenceU8 / 255) * 100)}%</span>
+            </div>
+          `)
+          .join("") || '<div class="track-row"><span class="track-dot"></span><strong>No tracks yet</strong><span>--</span></div>';
+      }
+
+      async function joinRoom() {
+        if (!state.roomId) {
+          setPill("connectionPill", "warn", "Room required");
+          setMessage("Enter a room ID to open a cloud tactical map.");
+          return undefined;
+        }
+
+        const response = await fetch(apiUrl(`/api/rooms/${encodeURIComponent(state.roomId)}/join`), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            password: state.password
+          })
+        });
+
+        if (!response.ok) {
+          let message = `${response.status} ${response.statusText}`;
+          try {
+            const body = await response.json();
+            message = body.error || message;
+          } catch {
+            // Keep HTTP status text.
+          }
+          throw new Error(message);
+        }
+
+        return response.json();
+      }
+
+      async function connect() {
+        window.clearTimeout(state.reconnectTimer);
+        if (state.socket) {
+          state.socket.close();
+          state.socket = undefined;
+        }
+
+        try {
+          setPill("connectionPill", state.attempt ? "warn" : "warn", state.attempt ? "Reconnecting" : "Joining");
+          setMessage("Joining cloud room.");
+          const join = await joinRoom();
+          if (!join) {
+            return;
+          }
+
+          const socket = new WebSocket(wsUrl(join.viewer_url));
+          socket.binaryType = "arraybuffer";
+          state.socket = socket;
+
+          socket.onopen = () => {
+            state.attempt = 0;
+            setPill("connectionPill", "ok", "Viewer connected");
+            setMessage("Connected. Waiting for snapshots.");
+          };
+
+          socket.onmessage = (event) => {
+            if (!(event.data instanceof ArrayBuffer)) {
+              return;
+            }
+
+            try {
+              const snapshot = decodeEnvelope(event.data);
+              if (snapshot) {
+                render(snapshot);
+              }
+            } catch (error) {
+              setPill("connectionPill", "bad", "Decode error");
+              setMessage(error.message || "Cloud snapshot decode failed.");
+            }
+          };
+
+          socket.onerror = () => {
+            setPill("connectionPill", "bad", "WebSocket error");
+          };
+
+          socket.onclose = () => {
+            if (state.socket !== socket) {
+              return;
+            }
+
+            state.attempt += 1;
+            const delay = Math.min(30000, 1000 * 2 ** Math.min(state.attempt, 5));
+            setPill("connectionPill", "warn", `Retry in ${Math.round(delay / 1000)}s`);
+            setMessage("Viewer disconnected. Reconnecting.");
+            state.reconnectTimer = window.setTimeout(connect, delay);
+          };
+        } catch (error) {
+          state.attempt += 1;
+          const delay = Math.min(30000, 1000 * 2 ** Math.min(state.attempt, 5));
+          setPill("connectionPill", "bad", "Join failed");
+          setMessage(error.message || "Could not join cloud room.");
+          state.reconnectTimer = window.setTimeout(connect, delay);
+        }
+      }
+
+      $("joinForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        state.roomId = $("roomInput").value.trim();
+        state.password = $("passwordInput").value;
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set("room", state.roomId);
+        if (state.password) {
+          nextUrl.searchParams.set("password", state.password);
+        } else {
+          nextUrl.searchParams.delete("password");
+        }
+        window.history.replaceState(undefined, "", nextUrl);
+        connect();
+      });
+
+      connect();
+    </script>
+  </body>
+</html>

@@ -147,10 +147,10 @@
                             Glyph="&#xE968;" />
                         <TextBlock
                             FontWeight="SemiBold"
-                            Text="Relay ready" />
+                            Text="Room relay" />
                         <TextBlock
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="Server address, player identity, and access password settings live in this local client." />
+                            Text="Paste the server-provided Relay URL; the client derives server and room internally." />
                     </StackPanel>
                 </Border>
 
