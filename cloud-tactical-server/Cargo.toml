@@ -1,6 +1,6 @@
 [package]
 name = "cloud-tactical-server"
-version = "0.2.4"
+version = "0.2.5"
 description = "WT 8111 Neo cloud tactical server - multi-source track fusion and situational awareness"
 authors = ["WT 8111 Neo"]
 edition = "2021"

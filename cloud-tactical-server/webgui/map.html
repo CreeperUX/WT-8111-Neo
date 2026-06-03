@@ -451,6 +451,7 @@
         password: params.get("password") || params.get("cloudPassword") || "",
         socket: undefined,
         reconnectTimer: undefined,
+        mapImageRetryTimer: undefined,
         attempt: 0,
         snapshot: undefined,
         mapGeneration: undefined,
@@ -920,6 +921,8 @@
         image.classList.add("hidden");
         image.onload = () => {
           state.mapOk = true;
+          window.clearTimeout(state.mapImageRetryTimer);
+          state.mapImageRetryTimer = undefined;
           image.classList.remove("hidden");
           setPill("mapPill", "ok", `Map gen ${generation}`);
         };
@@ -927,8 +930,22 @@
           state.mapOk = false;
           image.classList.add("hidden");
           setPill("mapPill", "warn", "Map image pending");
+          scheduleMapImageRetry();
         };
         image.src = apiUrl(`/api/rooms/${encodeURIComponent(roomId)}/map-image?gen=${generation}&t=${Date.now()}`);
+      }
+
+      function scheduleMapImageRetry() {
+        if (state.mapImageRetryTimer || state.mapOk || !state.snapshot?.roomId) {
+          return;
+        }
+
+        state.mapImageRetryTimer = window.setTimeout(() => {
+          state.mapImageRetryTimer = undefined;
+          if (!state.mapOk && state.snapshot?.roomId) {
+            updateMapImage(state.snapshot.roomId, state.snapshot.mapGeneration);
+          }
+        }, 5000);
       }
 
       function render(snapshot) {

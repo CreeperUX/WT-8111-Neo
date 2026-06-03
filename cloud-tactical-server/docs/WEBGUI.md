@@ -1,6 +1,6 @@
 # WT 8111 Neo Cloud Tactical Server WebGUI
 
-> Server version: 0.2.4
+> Server version: 0.2.5
 
 The cloud server now serves a room-management WebGUI at:
 
