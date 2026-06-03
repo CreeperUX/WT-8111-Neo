@@ -743,7 +743,7 @@
             <div class="page-heading">
               <h2>Cloud Room Management</h2>
               <p>
-                Create rooms, copy relay links, and verify viewer access for WT 8111 Neo clients.
+                Create rooms, copy relay links, and open tactical maps for WT 8111 Neo clients.
               </p>
             </div>
 
@@ -975,38 +975,6 @@
                   </div>
                 </section>
 
-                <section class="card">
-                  <div class="card-header">
-                    <div class="section-title">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M20 6 9 17l-5-5" />
-                      </svg>
-                      <div>
-                        <h3>Join Check</h3>
-                        <p>Verify the selected room password before sharing links.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <form id="joinForm" class="form-grid">
-                    <label>
-                      Room ID
-                      <input id="joinRoomInput" autocomplete="off" placeholder="alpha-squad" />
-                    </label>
-                    <label>
-                      Password
-                      <input id="joinPasswordInput" autocomplete="current-password" type="password" placeholder="Optional" />
-                    </label>
-                    <div class="actions">
-                      <button class="command" type="submit">
-                        <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                          <path d="M20 6 9 17l-5-5" />
-                        </svg>
-                        Join room
-                      </button>
-                    </div>
-                  </form>
-                </section>
               </aside>
             </div>
           </section>
@@ -1130,10 +1098,6 @@
         $("viewerUrl").textContent = absoluteWsUrl(room.viewer_url ?? `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`);
         $("webGuiUrl").textContent = webGuiUrl(room.room_id, password);
         $("openMapButton").disabled = false;
-        $("joinRoomInput").value = room.room_id;
-        if (password) {
-          $("joinPasswordInput").value = password;
-        }
       }
 
       function refreshSelectedMapUrl() {
@@ -1214,7 +1178,8 @@
               relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
               viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
             };
-            updateLinks(detail, $("joinPasswordInput").value.trim());
+            const password = state.selectedRoom?.room_id === room.room_id ? state.selectedPassword : "";
+            updateLinks(detail, password);
             setStatus("info", "Room selected", `Selected ${room.room_id}. Copy the Relay URL into the WinUI Sync page.`);
           });
           row.addEventListener("keydown", (event) => {
@@ -1230,8 +1195,9 @@
               relay_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/relay`,
               viewer_url: `/ws/rooms/${encodeURIComponent(room.room_id)}/viewer`
             };
-            updateLinks(detail, $("joinPasswordInput").value.trim());
-            openTacticalMap(detail, $("joinPasswordInput").value.trim());
+            const password = state.selectedRoom?.room_id === room.room_id ? state.selectedPassword : "";
+            updateLinks(detail, password);
+            openTacticalMap(detail, password);
           });
           list.appendChild(row);
         }
@@ -1303,29 +1269,6 @@
         }
       }
 
-      async function joinRoom(event) {
-        event.preventDefault();
-        const roomId = $("joinRoomInput").value.trim();
-        const password = $("joinPasswordInput").value;
-
-        if (!roomId) {
-          setStatus("warning", "Room ID required", "Enter or select a room before running join check.");
-          return;
-        }
-
-        try {
-          setStatus("info", "Joining room", `POST /api/rooms/${roomId}/join.`);
-          const room = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
-            method: "POST",
-            body: JSON.stringify({ password })
-          });
-          updateLinks(room, password);
-          setStatus("success", "Room accepted", `Room ${room.room_id} accepted viewer and relay access.`);
-        } catch (error) {
-          setStatus("error", "Join failed", error.message);
-        }
-      }
-
       async function copyTextFrom(targetId) {
         const text = $(targetId).textContent.trim();
         if (!text || text === "--") {
@@ -1342,7 +1285,6 @@
       }
 
       $("createForm").addEventListener("submit", createRoom);
-      $("joinForm").addEventListener("submit", joinRoom);
       $("refreshButton").addEventListener("click", () => refreshAll(true));
       $("webGuiBaseInput").addEventListener("input", () => {
         localStorage.setItem(webGuiBaseStorageKey, $("webGuiBaseInput").value.trim());

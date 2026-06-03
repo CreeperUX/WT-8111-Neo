@@ -19,7 +19,6 @@ tables.
 - Create public or password-protected rooms.
 - Refresh and inspect active rooms.
 - Copy Relay and Viewer WebSocket URLs.
-- Verify room access with `POST /api/rooms/{room_id}/join`.
 - Generate a tactical-map launch URL for the selected room.
 - Open the local/LAN tactical map WebGUI with cloud parameters already applied.
 

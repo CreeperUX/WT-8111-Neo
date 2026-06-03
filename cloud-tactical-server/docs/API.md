@@ -45,7 +45,7 @@ Server version and protocol info.
 
 #### `GET /`
 
-Serves the Cloud Room Management console. The page matches the WinUI control-console style and calls the REST endpoints below to create rooms, join rooms, refresh active rooms, copy relay/viewer links, and open the local tactical map WebGUI for a selected room.
+Serves the Cloud Room Management console. The page matches the WinUI control-console style and calls the REST endpoints below to create rooms, refresh active rooms, copy relay/viewer links, and open the local tactical map WebGUI for a selected room.
 
 #### `GET /rooms`
 
